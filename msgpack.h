@@ -25,6 +25,7 @@
 #include "likely.h"              // for likely, unlikely
 
 #include <cassert>               // for assert
+#include <functional>            // for std::function
 #include <memory>
 #include <sstream>
 #include <string_view>           // for std::string_view
