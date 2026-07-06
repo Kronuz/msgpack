@@ -6,6 +6,7 @@
 #include <iostream>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include "rapidjson/document.h"
 
@@ -121,12 +122,78 @@ static void test_string_view_adaptor() {
 	assert(output == input);
 }
 
+// Iterating an array yields its elements in order; iterating a map yields its
+// keys, and at(key) yields the value. Ported from Xapiand's oldtests msgpack
+// iterator case.
+static void test_iterate() {
+	MsgPack arr = { 10, 20, 30 };
+	assert(arr.is_array());
+	std::vector<uint64_t> elems;
+	for (auto it = arr.cbegin(); it != arr.cend(); ++it) {
+		elems.push_back(it->as_u64());
+	}
+	assert((elems == std::vector<uint64_t>{ 10, 20, 30 }));
+
+	MsgPack m = { { "a", 1 }, { "b", 2 }, { "c", 3 } };
+	assert(m.is_map());
+	size_t count = 0;
+	uint64_t sum = 0;
+	for (auto it = m.cbegin(); it != m.cend(); ++it) {
+		sum += m.at(*it).as_u64();   // *it is the key, at(key) is the value
+		++count;
+	}
+	assert(count == 3);
+	assert(sum == 6);
+}
+
+// erase() removes a map key or an array index and reports how many it removed.
+// Ported from Xapiand's oldtests msgpack erase case.
+static void test_erase() {
+	MsgPack m = { { "a", 1 }, { "b", 2 }, { "c", 3 } };
+	assert(m.erase("b") == 1);
+	assert(m.size() == 2);
+	bool gone = true;
+	try { m.at("b"); gone = false; } catch (...) { }
+	assert(gone);
+	assert(m.at("a").as_u64() == 1 && m.at("c").as_u64() == 3);
+
+	MsgPack arr = { 10, 20, 30 };
+	arr.erase(static_cast<size_t>(1));   // drop the middle element
+	assert(arr.size() == 2);
+	assert(arr.at(0).as_u64() == 10 && arr.at(1).as_u64() == 30);
+}
+
+// A MsgPack& (or a sub-object taken by reference) aliases the same value, unlike
+// a copy which is copy-on-write. Ported from Xapiand's oldtests msgpack reference
+// case, and paired here with the COW copy behavior above.
+static void test_reference_aliasing() {
+	MsgPack obj = { { "x", "X" }, { "y", "Y" } };
+	MsgPack& alias = obj;
+	alias["x"] = "X2";
+	obj["z"] = "Z";
+	assert(obj["x"].str() == "X2");   // change through alias is visible on obj
+	assert(alias["z"].str() == "Z");  // and vice versa
+	assert(obj.to_string() == alias.to_string());
+
+	// A sub-object taken by reference mutates the parent in place (COW happens on
+	// copy, not on a reference).
+	MsgPack doc = { { "inner", { { "k", 1 } } } };
+	MsgPack& inner = doc["inner"];
+	inner["k"] = 2;
+	inner["k2"] = 3;
+	assert(doc["inner"]["k"].as_u64() == 2);
+	assert(doc["inner"]["k2"].as_u64() == 3);
+}
+
 int main() {
 	test_construct_copy_index_roundtrip();
 	test_type_coverage();
 	test_rapidjson_roundtrip();
 	test_json_patch();
 	test_string_view_adaptor();
+	test_iterate();
+	test_erase();
+	test_reference_aliasing();
 	std::cout << "msgpack OK" << std::endl;
 	return 0;
 }
