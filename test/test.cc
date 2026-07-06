@@ -111,6 +111,63 @@ static void test_json_patch() {
 	assert(object.to_string() == "{\"name\":\"Trinity\",\"tags\":[\"chosen\",\"operator\"]}");
 }
 
+// The remaining RFC 6902 operations (move, copy, test) plus the incr/decr
+// extensions and RFC 6901 pointer escaping. Ported from Xapiand's oldtests
+// patcher suite (which drove them from fixture files) to inline cases.
+static void test_json_patch_ops() {
+	// copy leaves the source in place; move removes it.
+	{
+		MsgPack obj = { { "a", 1 }, { "b", { { "x", 10 } } } };
+		MsgPack patch = {
+			MsgPack({ { "op", "copy" }, { "from", "/a" }, { "path", "/a_copy" } }),
+			MsgPack({ { "op", "move" }, { "from", "/b/x" }, { "path", "/moved_x" } }),
+		};
+		apply_patch(patch, obj);
+		assert(obj["a"].as_u64() == 1);
+		assert(obj["a_copy"].as_u64() == 1);
+		assert(obj["moved_x"].as_u64() == 10);
+		assert(obj["b"].count("x") == 0);
+	}
+
+	// test passes silently when the value matches, and throws when it doesn't.
+	{
+		MsgPack obj = { { "n", "Neo" } };
+		// A single-op patch must be built as an explicit array: a one-element
+		// initializer list would be read as a map, not an array of one object.
+		MsgPack ok = MsgPack::ARRAY();
+		ok.push_back(MsgPack({ { "op", "test" }, { "path", "/n" }, { "value", "Neo" } }));
+		apply_patch(ok, obj);   // no throw
+		MsgPack bad = MsgPack::ARRAY();
+		bad.push_back(MsgPack({ { "op", "test" }, { "path", "/n" }, { "value", "Smith" } }));
+		bool threw = false;
+		try { MsgPack copy = obj; apply_patch(bad, copy); } catch (...) { threw = true; }
+		assert(threw);
+	}
+
+	// incr / decr numeric extensions.
+	{
+		MsgPack obj = { { "count", 10 } };
+		MsgPack patch = {
+			MsgPack({ { "op", "incr" }, { "path", "/count" }, { "value", 5 } }),
+			MsgPack({ { "op", "decr" }, { "path", "/count" }, { "value", 2 } }),
+		};
+		apply_patch(patch, obj);
+		assert(obj["count"].as_u64() == 13);
+	}
+
+	// RFC 6901 pointer escaping: ~1 is '/', ~0 is '~'.
+	{
+		MsgPack obj = { { "a/b", 1 }, { "m~n", 2 } };
+		MsgPack patch = {
+			MsgPack({ { "op", "replace" }, { "path", "/a~1b" }, { "value", 100 } }),
+			MsgPack({ { "op", "replace" }, { "path", "/m~0n" }, { "value", 200 } }),
+		};
+		apply_patch(patch, obj);
+		assert(obj["a/b"].as_u64() == 100);
+		assert(obj["m~n"].as_u64() == 200);
+	}
+}
+
 static void test_string_view_adaptor() {
 	std::string_view input("view-data");
 	msgpack::sbuffer buffer;
@@ -190,6 +247,7 @@ int main() {
 	test_type_coverage();
 	test_rapidjson_roundtrip();
 	test_json_patch();
+	test_json_patch_ops();
 	test_string_view_adaptor();
 	test_iterate();
 	test_erase();
