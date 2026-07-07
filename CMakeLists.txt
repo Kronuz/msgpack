@@ -30,10 +30,7 @@ FetchContent_MakeAvailable(
 # RapidJSON is header-only for this library. Populate sources instead of running
 # RapidJSON's own CMake project.
 FetchContent_Declare(rapidjson GIT_REPOSITORY https://github.com/Tencent/rapidjson.git GIT_TAG v1.1.0)
-FetchContent_GetProperties(rapidjson)
-if(NOT rapidjson_POPULATED)
-	FetchContent_Populate(rapidjson)
-endif()
+FetchContent_MakeAvailable(rapidjson)
 add_library(rapidjson_headers INTERFACE)
 target_include_directories(rapidjson_headers INTERFACE "${rapidjson_SOURCE_DIR}/include")
 
