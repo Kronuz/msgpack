@@ -28,8 +28,11 @@ FetchContent_MakeAvailable(
 )
 
 # RapidJSON is header-only for this library. Populate sources instead of running
-# RapidJSON's own CMake project.
-FetchContent_Declare(rapidjson GIT_REPOSITORY https://github.com/Tencent/rapidjson.git GIT_TAG v1.1.0)
+# RapidJSON's own CMake project: SOURCE_SUBDIR points at a non-existent subdir so
+# FetchContent sets rapidjson_SOURCE_DIR but skips add_subdirectory. This avoids
+# RapidJSON's ancient cmake_minimum_required (CMake 4.x rejects it outright, and it
+# would also build a bundled gtest), so no -DCMAKE_POLICY_VERSION_MINIMUM is needed.
+FetchContent_Declare(rapidjson GIT_REPOSITORY https://github.com/Tencent/rapidjson.git GIT_TAG v1.1.0 SOURCE_SUBDIR do-not-configure)
 FetchContent_MakeAvailable(rapidjson)
 add_library(rapidjson_headers INTERFACE)
 target_include_directories(rapidjson_headers INTERFACE "${rapidjson_SOURCE_DIR}/include")
