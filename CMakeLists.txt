@@ -14,7 +14,7 @@ FetchContent_Declare(atomic_shared_ptr GIT_REPOSITORY https://github.com/Kronuz/
 FetchContent_Declare(enum_reflection  GIT_REPOSITORY https://github.com/Kronuz/enum-reflection.git     GIT_TAG main)
 FetchContent_Declare(strict_stox      GIT_REPOSITORY https://github.com/Kronuz/strict-stox.git         GIT_TAG main)
 FetchContent_Declare(located_exception GIT_REPOSITORY https://github.com/Kronuz/located-exception.git  GIT_TAG main)
-FetchContent_Declare(perfect_hash     GIT_REPOSITORY https://github.com/Kronuz/perfect-hash.git        GIT_TAG main)
+FetchContent_Declare(constexpr_phf    GIT_REPOSITORY https://github.com/Kronuz/constexpr-phf.git       GIT_TAG master)
 FetchContent_Declare(hashes           GIT_REPOSITORY https://github.com/Kronuz/hashes.git              GIT_TAG main)
 FetchContent_Declare(repr             GIT_REPOSITORY https://github.com/Kronuz/repr.git                GIT_TAG main)
 FetchContent_MakeAvailable(
@@ -22,7 +22,7 @@ FetchContent_MakeAvailable(
 	enum_reflection
 	strict_stox
 	located_exception
-	perfect_hash
+	constexpr_phf
 	hashes
 	repr
 )
@@ -48,7 +48,7 @@ target_link_libraries(msgpack
 		enum_reflection::enum_reflection
 		strict_stox::strict_stox
 		located_exception
-		perfect_hash
+		constexpr_phf
 		hashes::hashes
 		repr::repr
 		rapidjson_headers
