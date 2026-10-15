@@ -1,5 +1,7 @@
 # msgpack
 
+[![CI](https://github.com/Kronuz/msgpack/actions/workflows/ci.yml/badge.svg)](https://github.com/Kronuz/msgpack/actions/workflows/ci.yml)
+
 A batteries-included MessagePack value library extracted from [Xapiand](https://github.com/Kronuz/Xapiand). It bundles the Xapiand fork of `msgpack-c` v1.3.0, keeps the `MsgPack` copy-on-write value type, ships the RapidJSON and `std::string_view` adaptors, and includes the RFC 6902 JSON-Patch helper over a `MsgPack` DOM.
 
 The file layout is intentionally the same as Xapiand's original tree: include `msgpack.h`, `msgpack.hpp`, `msgpack/...`, `msgpack_patcher.h`, or `xchange/...` exactly as before.
