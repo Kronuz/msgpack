@@ -387,6 +387,14 @@ inline msgpack::packer<Stream>& packer<Stream>::pack(const T& v)
 
 inline bool operator==(const msgpack::object& x, const msgpack::object& y)
 {
+    // Signed values are always NEGATIVE_INTEGER here, and the wire packs a non-negative one
+    // as positive, so an integer compares by value across the two types.
+    if(x.type == msgpack::type::POSITIVE_INTEGER && y.type == msgpack::type::NEGATIVE_INTEGER) {
+        return y.via.i64 >= 0 && static_cast<uint64_t>(y.via.i64) == x.via.u64;
+    }
+    if(x.type == msgpack::type::NEGATIVE_INTEGER && y.type == msgpack::type::POSITIVE_INTEGER) {
+        return x.via.i64 >= 0 && static_cast<uint64_t>(x.via.i64) == y.via.u64;
+    }
     if(x.type != y.type) { return false; }
 
     switch(x.type) {

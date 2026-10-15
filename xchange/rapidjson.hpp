@@ -47,7 +47,8 @@ namespace msgpack { MSGPACK_API_VERSION_NAMESPACE(MSGPACK_DEFAULT_API_NS) { name
 					break;
 				case msgpack::type::BIN: // fall through
 				case msgpack::type::STR:
-					v.SetString(o.via.str.ptr, o.via.str.size);
+					// Copied: msgpack's bytes are not NUL-terminated and do not outlive the object.
+					v.SetString(o.via.str.ptr, o.via.str.size, v.GetAllocator());
 					break;
 				case msgpack::type::ARRAY: {
 					v.SetArray();
