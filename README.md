@@ -1,56 +1,94 @@
 # msgpack
 
 [![CI](https://github.com/Kronuz/msgpack/actions/workflows/ci.yml/badge.svg)](https://github.com/Kronuz/msgpack/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)
 
-A batteries-included MessagePack value library extracted from [Xapiand](https://github.com/Kronuz/Xapiand). It bundles the Xapiand fork of `msgpack-c` v1.3.0, keeps the `MsgPack` copy-on-write value type, ships the RapidJSON and `std::string_view` adaptors, and includes the RFC 6902 JSON-Patch helper over a `MsgPack` DOM.
+A JSON-like value for C++20 that serializes to MessagePack: build it with
+initializer lists, index it like a map or array, copy it cheaply, and patch it with
+RFC 6902 JSON Patch. It is Xapiand's universal value type, extracted.
 
-The file layout is intentionally the same as Xapiand's original tree: include `msgpack.h`, `msgpack.hpp`, `msgpack/...`, `msgpack_patcher.h`, or `xchange/...` exactly as before.
+## ✨ Highlights
 
-## Usage
+- 🧱 **`MsgPack`**: maps, arrays, strings, numbers, and booleans, with typed accessors
+  and selectors.
+- 🐄 **Copy-on-write**: copies share storage until one of them changes.
+- 📦 **MessagePack on the wire**: `serialise()` and `MsgPack::unserialise()`.
+- 🔁 **JSON both ways** through RapidJSON, accepting comments, trailing commas, and
+  `NaN`/`Inf`.
+- 🩹 **JSON Patch**: `add`, `remove`, `replace`, `move`, `copy`, `test`, plus `incr`
+  and `decr`.
+
+## 📦 Installation
+
+Requires a C++20 compiler and CMake 3.14 or newer. RapidJSON and seven Kronuz
+libraries are fetched at configure time. CI builds it on Linux (x86_64, arm64), macOS
+(arm64, x86_64), and FreeBSD, plus ASan, UBSan, and TSan builds.
+
+```cmake
+include(FetchContent)
+FetchContent_Declare(msgpack
+  GIT_REPOSITORY https://github.com/Kronuz/msgpack.git
+  GIT_TAG        main)
+FetchContent_MakeAvailable(msgpack)
+
+target_link_libraries(my_app PRIVATE msgpack::msgpack)
+```
+
+## 🚀 Quick start
 
 ```cpp
 #include "msgpack.h"
 #include "msgpack_patcher.h"
 
-MsgPack doc = {
-	{ "name", "Neo" },
-	{ "tags", { "chosen" } },
-};
+#include <iostream>
 
-doc["tags"].push_back("operator");
-std::string wire = doc.serialise();
-MsgPack copy = MsgPack::unserialise(wire);
+int main() {
+	MsgPack doc = {
+		{ "name", "Neo" },
+		{ "tags", { "chosen" } },
+	};
+	doc["tags"].push_back("operator");
 
-MsgPack patch = MsgPack::ARRAY();
-patch.push_back(MsgPack({ { "op", "replace" }, { "path", "/name" }, { "value", "Trinity" } }));
-apply_patch(patch, copy);
+	std::string wire = doc.serialise();
+	MsgPack copy = MsgPack::unserialise(wire);
+
+	MsgPack patch = MsgPack::ARRAY();
+	patch.push_back(MsgPack({ { "op", "replace" }, { "path", "/name" }, { "value", "Trinity" } }));
+	apply_patch(patch, copy);
+
+	std::cout << copy.to_string() << '\n';   // the patched document as JSON
+}
 ```
 
-## What's included
+## 🎯 When to use it
 
-- **`msgpack/` + `msgpack.hpp`**: upstream `msgpack-c` v1.3.0 headers, with Xapiand's forked `msgpack/exception.hpp` preserved. The fork makes msgpack exceptions inherit `BaseException`.
-- **`msgpack.h`**: Xapiand's `MsgPack` value type, with JSON-like map/array access, serialise/unserialise helpers, typed accessors, selectors, and copy-on-write storage.
-- **`xchange/rapidjson.hpp` and `xchange/string_view.hpp`**: msgpack adaptors for RapidJSON and `std::string_view`.
-- **`msgpack_patcher.{h,cc}`**: RFC 6902 JSON-Patch operations (`add`, `remove`, `replace`, `move`, `copy`, `test`, plus Xapiand's `incr`/`decr`).
+- ✅ Schemaless documents that move between JSON and MessagePack, or Xapiand-compatible
+  code.
+- ❌ A modern MessagePack library for new code: this bundles msgpack-c 1.3.0, as
+  Xapiand did. Prefer current msgpack-c or a dedicated serializer.
 
-## Dependencies
+## 📚 Documentation
 
-CMake fetches the Kronuz support libraries at `main`: `atomic-shared-ptr`, `enum-reflection`, `strict-stox`, `located-exception`, `perfect-hash`, `hashes`, and `repr`. RapidJSON is fetched at `v1.1.0` and kept header-only. The library also carries Xapiand's `likely.h` locally.
+- [ARCHITECTURE.md](ARCHITECTURE.md): the value type, the bundled msgpack-c fork, the
+  adaptors, and the dependencies.
+- [AGENTS.md](AGENTS.md): repository map and invariants.
 
-The build defines RapidJSON's default parse flags as Xapiand did, accepting comments, trailing commas, and `NaN`/`Inf`.
-
-## Build / test
+## 🛠️ Building and testing
 
 ```sh
-cmake -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build
+cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build
 ctest --test-dir build
-./build/msgpack_demo
-./build/msgpack_benchmark
+./build/msgpack_demo && ./build/msgpack_benchmark
 ```
 
-Use local dependency checkouts with the normal FetchContent overrides, for example `-DFETCHCONTENT_SOURCE_DIR_LOCATED_EXCEPTION=/path/to/located-exception`.
+## 🤝 Contributing
 
-## License
+Issues and pull requests are welcome. Read [AGENTS.md](AGENTS.md) first. CI must
+pass on every platform.
 
-The Xapiand wrapper, patcher, adaptors, and seams are MIT licensed. The bundled `msgpack-c` v1.3.0 headers are Boost Software License 1.0; see `LICENSE_1_0.txt` and the copyright headers in `msgpack/` and `msgpack.hpp`.
+## 📄 License
+
+MIT, Copyright (c) 2015-2019 Dubalu LLC. See [LICENSE](LICENSE). The bundled
+msgpack-c 1.3.0 headers are under the Boost Software License 1.0; see
+[LICENSE_1_0.txt](LICENSE_1_0.txt). Extracted from [Xapiand](https://github.com/Kronuz/Xapiand).
