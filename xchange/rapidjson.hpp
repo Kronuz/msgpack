@@ -1,4 +1,5 @@
 /*
+ * Copyright © 2026 Germán Méndez Bravo (Kronuz)
  * Copyright (c) 2015-2018 Dubalu LLC
  * Copyright (c) 2015 xpol xpolife@gmail.com
  *
