@@ -63,3 +63,11 @@ The build defines RapidJSON's default parse flags as Xapiand did, accepting comm
 
 Use local dependency checkouts with the normal FetchContent overrides, for example
 `-DFETCHCONTENT_SOURCE_DIR_LOCATED_EXCEPTION=/path/to/located-exception`.
+
+## Optional bounded mechanism
+
+`msgpack::bounded` exposes `msgpack/bounded.hpp` without DOM dependencies. Its incremental lexer has no recursion, nesting stack, retained input views or complete-document buffer. The caller supplies lexical limits and byte allowances and validates the emitted tokens against its schema. `finish()` is a token-boundary check, not document validation.
+
+Fixed scratch copies only populated bytes. Dynamic storage receives an explicit allocator when supplied, and emitted payload storage swaps with an empty token using that same allocator. This keeps decoder allocator state intact after output tokens move away. Failed decoding permanently fences the lexer.
+
+Encoding stays in `msgpack::packer`. The append-style output adapter supplies its existing stream seam, while its checked string-view overloads delegate to the same string and binary header/body methods. Existing pack/unpack and DOM behavior remains intact. Disable `MSGPACK_BUILD_DOM` to avoid fetching the COW value and patcher's dependency graph.

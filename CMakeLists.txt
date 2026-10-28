@@ -9,6 +9,28 @@ if(NOT CMAKE_BUILD_TYPE)
 	set(CMAKE_BUILD_TYPE Release)
 endif()
 
+# Bounded tokens and pack.hpp use only bundled headers and the standard library.
+add_library(msgpack_bounded INTERFACE)
+add_library(msgpack::bounded ALIAS msgpack_bounded)
+target_include_directories(msgpack_bounded INTERFACE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_compile_features(msgpack_bounded INTERFACE cxx_std_20)
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    enable_testing()
+    add_executable(msgpack_bounded_test test/bounded.cc)
+    target_link_libraries(msgpack_bounded_test PRIVATE msgpack::bounded)
+    add_test(NAME msgpack_bounded COMMAND msgpack_bounded_test)
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    add_test(NAME msgpack_bounded_vectors COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/test/bounded_vectors.py $<TARGET_FILE:msgpack_bounded_test>)
+    add_executable(msgpack_bounded_demo examples/bounded.cc)
+    target_link_libraries(msgpack_bounded_demo PRIVATE msgpack::bounded)
+endif()
+
+option(MSGPACK_BUILD_DOM "Build the existing COW value and patcher targets" ON)
+if(NOT MSGPACK_BUILD_DOM)
+    return()
+endif()
+
 # --- Dependencies (the Kronuz family, tracked at tip) ---
 FetchContent_Declare(atomic_shared_ptr GIT_REPOSITORY https://github.com/Kronuz/atomic-shared-ptr.git GIT_TAG b7bf5efcec1dd437caf0692263cedfe368adceb2)
 FetchContent_Declare(enum_reflection  GIT_REPOSITORY https://github.com/Kronuz/enum-reflection.git     GIT_TAG 9b5ecea02d7de8356ddd10fd874cd981aba399db)
@@ -58,6 +80,10 @@ add_library(msgpack::msgpack ALIAS msgpack)
 # Build tests, example, and benchmark only when this repo is the top-level project.
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 	enable_testing()
+
+	add_executable(msgpack_bounded_coexist_test test/bounded_coexist.cc)
+	target_link_libraries(msgpack_bounded_coexist_test PRIVATE msgpack::msgpack msgpack::bounded)
+	add_test(NAME msgpack_bounded_coexist COMMAND msgpack_bounded_coexist_test)
 
 	add_executable(msgpack_test test/test.cc)
 	target_link_libraries(msgpack_test PRIVATE msgpack)

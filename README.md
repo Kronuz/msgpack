@@ -23,9 +23,7 @@ RFC 6902 JSON Patch. It is Xapiand's universal value type, extracted.
 
 ## 📦 Installation
 
-Requires a C++20 compiler and CMake 3.14 or newer. RapidJSON and seven Kronuz
-libraries are fetched at configure time. CI builds it on Linux (x86_64, arm64), macOS
-(arm64, x86_64), and FreeBSD, plus ASan, UBSan, and TSan builds.
+Requires a C++20 compiler and CMake 3.16 or newer. The default DOM build fetches RapidJSON and seven Kronuz libraries. Bounded-only configuration fetches none. CI builds the library on Linux (x86_64, arm64), macOS (arm64, x86_64), and FreeBSD, plus ASan, UBSan, and TSan builds.
 
 ```cmake
 include(FetchContent)
@@ -94,3 +92,33 @@ pass on every platform.
 MIT, Copyright (c) 2015-2019 Dubalu LLC. See [LICENSE](LICENSE). The bundled
 msgpack-c 1.3.0 headers are under the Boost Software License 1.0; see
 [LICENSE_1_0.txt](LICENSE_1_0.txt). Extracted from [Xapiand](https://github.com/Kronuz/Xapiand).
+
+## Bounded lexical decoding
+
+`msgpack::bounded` is a header-only target using bundled headers and the standard library. Configure with `-DMSGPACK_BUILD_DOM=OFF` to omit the COW value, patcher and all fetched dependencies. The existing DOM target and dependencies remain enabled by default.
+
+```cpp
+#include <msgpack/bounded.hpp>
+
+msgpack::bounded::InlineBytes<64> output;
+msgpack::bounded::AppendPacker pack(output);
+pack.pack_array(2).pack_uint64(42);
+pack.pack_str(std::string_view("hello"));
+msgpack::bounded::BasicDecoder<msgpack::bounded::InlineBytes<32>> decoder;
+auto input = std::span<const char>(output.data(), output.size());
+while (!input.empty()) {
+    std::size_t budget = 1;
+    if (auto token = decoder.next(input, budget)) {
+        // Validate the application's tuple shape and values here.
+    }
+}
+decoder.finish();
+```
+
+The decoder emits flat array headers, integers, strings, binary fields, booleans and nil. It enforces supplied lexical limits before growing payload storage, emits at most one owning token per call and consumes at most the supplied input-byte budget. Maps, floats and extensions remain outside this narrow decoder. `finish()` rejects partial tokens; it does not validate a complete recursive MessagePack object. Empty input and a bare array header can therefore finish successfully. The application validates nesting, tuple arity and aggregate counts.
+
+`InlineBytes<N>` supplies allocation-free storage with populated-prefix copies. `BasicDecoder<std::string>` is the dynamic default; allocator-bearing storage can be supplied explicitly as the second constructor argument. Emission and token reset preserve that allocator. Allocator resources must outlive their allocations unless the supplied allocator itself retains ownership. Byte accounting does not bound arbitrary allocator work or application schema processing.
+
+`AppendPacker` adapts an output's synchronous `append(string_view)` to the existing packer's `write` seam. It is noncopyable because the packer borrows its stream. Its `pack_str(string_view)` and `pack_bin(string_view)` overloads check the 32-bit wire length and call the existing header/body encoders. Existing integer-size overloads keep their behavior. Output errors may leave partial caller-owned scratch; publish only a completed encoding. The bounded decoder uses standard exceptions, independently of the existing DOM exception seam.
+
+See [examples/bounded.cc](examples/bounded.cc) and [test/bounded.cc](test/bounded.cc). New bounded code is MIT licensed; the bundled packer retains its existing Boost license.
