@@ -31,6 +31,43 @@ releases, so entries are dated.
 
 ### Fixed
 
+- `replace()` and `put()` over a key (or an index) whose old value was a map or an array
+  that had been read keep the new value's index right. The new object replaced the old one
+  but the value's `Body` kept the index and the capacity of the old value, so reading or
+  changing the new value went by the entries of the old one: an assertion in a build with
+  assertions, an out-of-bounds read otherwise (`{"k": {"x":1,"y":2,"w":3}}`, `doc["k"]["x"]`,
+  then `doc.put("k", {"a":1})`, then `doc["k"]["zz"] = 5`). The new object is built first (that
+  can throw and changes nothing), then the old value's index is dropped, as `operator=` does.
+  Replacing a value that was locked on its own throws `const_error`, as assigning to it does.
+  `test/replace_lock_test.cc` (`msgpack_replace_lock`) replaces every kind of value with every
+  kind, in a map and in an array, after reading the old one not at all, by reference and
+  completely (900 cases), then reads and changes the new one against the model; and 3,200
+  random replaces at any depth. Four mutants, all killed (`revert_replace`,
+  `replace_map_keeps_index`, `replace_array_keeps_index`, `replace_capacity_kept`).
+- A `lock()` that throws leaves nothing locked. Filling a map with a key that is not a
+  string throws, and `lock()` locked each map before filling the ones below it, so the maps above
+  the bad one stayed locked (and `locked()` said so). `lock()` now fills everything and then
+  locks. The same test checks it on random documents with and without a bad map (61 and 339 of
+  400); mutant `revert_lock`.
+- `erase()` returns 1 for the last element of a map or an array, as for any other. It
+  returned 0 although it had erased it: the count shared its slot with "is there an element
+  after it". The data was always right. The frozen implementation has the old behavior, so
+  `test/diff_test.cc` compares the change in size across an erase and not the returned count.
+  `test_erase_counts` in `test/hunt_test.cc` covers every position and key of small documents;
+  mutant `erase_last_returns_zero`.
+- References to the children of an array element stay valid when the array grows. Growing
+  re-pointed the elements and also dropped each element's index of its own children, so a
+  `MsgPack&` taken from `a.at(0)["k"]` dangled (AddressSanitizer: heap-use-after-free) after enough
+  `push_back`s. An element keeps its index when the array only moves to a larger buffer, and drops
+  it only when an `erase` moved other objects into its position. `test_references_survive_growth` in
+  `test/growth_test.cc`.
+- An allocation that fails leaves the document consistent. After a `std::bad_alloc` in `put`,
+  `replace`, `emplace`, `add`, `push_back`, `append`, `update`, `operator[]` or a fill, the tree held
+  an entry or element that the index did not (key not found, `std::out_of_range` from the array), or
+  the children pointed into the buffer the tree had just left. `_put` takes back the entry it added,
+  `_init_map` and `_init_array` take back what they indexed, and `_reserve_map` and `_reserve_array`
+  re-point the children before the step that allocates. An operation that fails may or may not have
+  taken effect, but the `MsgPack` agrees with its own bytes and keeps working.
 - A map that repeats a key is merged correctly. The last value wins and the entry
   keeps the position of the key's first occurrence, so
   `{"a":1,"a":2,"b":3,"c":4}` is `{"a":2,"b":3,"c":4}`; it used to be
@@ -109,24 +146,42 @@ releases, so entries are dated.
   `revert_failed_fill` (the check back in the loop), `failed_fill_first_key_only` and
   `failed_fill_last_key_skipped`.
 
+### Hunt
+
+`test/hunt_test.cc` (`msgpack_hunt`, and `msgpack_hunt_alloc` where `operator new` can be replaced) is a
+bounded bug hunt on `msgpack.h`: random sequences of every mutating operation (set by `[]`, `replace`,
+`put`, `emplace`, `add`, `update`, `push_back`, `append`, `erase` by key, position, iterator and `MsgPack`,
+`clear`, `reserve`, assignment of a whole value, 40 keys or elements at once, copy and move) at any depth of
+a document of maps, arrays, scalars and bad maps, against the model in `test/model.h`, comparing
+`serialise()` after every step and reading the whole document back through the API every few. Properties
+checked on documents without a bad map: `hash()`, `to_string()`, `as_document()` and a parse of the text
+agree with a fresh read of the same bytes; `lock()` of a copy throws exactly when a bad map is in it.
+Failures injected: bad maps (a fill that throws) and, in `msgpack_hunt_alloc`, one allocation made to fail
+(`std::bad_alloc`) around one operation in three, after which the model is read back from the bytes and
+the `MsgPack` must agree with them. Runs of the final tree: 300 runs in CTest; stress runs of 12,000 runs
+under AddressSanitizer and UBSan on arm64 macOS, 6,000 plain and 6,000 with failures (7,559 injected) under
+UBSan on x86-64 Linux, and the failing allocations under AddressSanitizer on both (1,870 and 399
+injected; LeakSanitizer on Linux), no report. It found the `erase()` count, the failure-safety above, and
+the reference problem. Mutants for it: `erase_last_returns_zero`, `init_map_keeps_partial`,
+`put_map_keeps_entry`, `put_array_keeps_size`, `reserve_map_repoints_late`,
+`reserve_array_repoints_late` (run `hunt_alloc` mutants with `SAN=-fsanitize=undefined` or none).
+`MSGPACK_HUNT_SKIP=op,op` skips operations and `MSGPACK_HUNT_TRACE=1` prints every step.
+
 ### Known problems found and left as they are
 
 Each needs an owner decision.
 
-- `put(key, value)` over a key whose value is a map or array that was already read
-  through the API leaves the old value's index on the new value. A map `{"k": {"x":1,
-  "y":2, "w":3}}` read through `doc["k"]["x"]`, then `doc.put("k", {"a":1})`, then
-  `doc["k"]["zz"] = 5`: the assertion `via.map.size == map.size()` fails in a build with
-  assertions, and without them the write reads past the new map (AddressSanitizer: a
-  read of 8 bytes 330 bytes after the 8 KB zone chunk). The frozen implementation reads
-  out of bounds the same way. Putting over a key the map does not have, or over a scalar,
-  is not affected. A fix would reset the value's index in `_put`, as `_update_array` does
-  for an element; it is not made here.
-- `to_string()` reads `via.str` of a map key that is not a string: undefined
-  behavior, as `as_document()` did.
-- `lock()` on a document with a map nested under a map that has a key that is not a
-  string throws from the nested fill after the maps above it were locked, so a failed
-  `lock()` leaves part of the document locked.
+- `update()` is not atomic. It merges entry by entry, so when it meets a bad map it has to fill
+  (or an allocation fails) the entries before that point stay applied.
+- `to_string()` and `as_document()` read `via.str` of a map key that is not a string: undefined
+  behavior, as the earlier `as_document()` did (the hunt only prints documents without a bad map).
+- A `MsgPack&` to a child of a value that is replaced, erased or cleared is gone with the value, as
+  with any container; a reference to an element itself is invalidated when an earlier element of its
+  array is erased (the elements move up).
+- Not covered by the hunt: the JSON Patch helper (`msgpack_patcher`), threads, repeated keys together
+  with edits (`msgpack_merge` covers repeats), changing a locked value (a build with assertions aborts
+  instead of throwing), and a failing `msgpack::zone` allocation (it uses `malloc`, which the hunt
+  cannot fail).
 
 ## 2026-10-31
 
