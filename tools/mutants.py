@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Mutation and revert checks for unserialise, hash(), to_string(), the merge of repeated keys and the growth of
-arrays. Each mutant edits one thing in msgpack.h and must make a named test fail (a nonzero exit, a crash or a
-timeout); a control with no edit must pass. A revert of unserialise, hash() or to_string() puts the previous
-implementation of one of the three back and must fail the allocation test; revert_merge and revert_growth undo
-the two fixes for repeated keys and for the growth of an array of maps.
+"""Mutation and revert checks for unserialise, hash(), to_string(), the merge of repeated keys, the growth of
+arrays and the fill of a map that has a key that is not a string. Each mutant edits one thing in msgpack.h and
+must make a named test fail (a nonzero exit, a crash or a timeout); a control with no edit must pass. A revert
+of unserialise, hash() or to_string() puts the previous implementation of one of the three back and must fail
+the allocation test; revert_merge, revert_growth and revert_failed_fill undo the three fixes.
 
 usage: tools/mutants.py REPO DEPS_DIR OUT_DIR [NAME...]
   DEPS_DIR is the `_deps` directory of a configured CMake build (the dependencies' sources).
@@ -57,6 +57,10 @@ mutants = {
  # growing an array of maps (the zone-sharing failure needs SAN=-fsanitize=address; the others do not)
  'revert_growth': ('growth', rep('MsgPack&& other) noexcept', 'MsgPack&& other)', 2)),
  'update_array_keeps_index': ('growth', rep('mobj._body->_initialized = false;', '')),
+ # a fill that throws leaves the map as it was
+ 'revert_failed_fill': ('failed_fill', lambda s: rep('assert(p->key.type == msgpack::type::STR);', 'if (p->key.type != msgpack::type::STR) { THROW(msgpack::type_error, "MAP keys must be of type STR"); }')(rep('if (k->key.type != msgpack::type::STR) {', 'if (false) {')(s))),
+ 'failed_fill_first_key_only': ('failed_fill', rep('k < kend; ++k) {', 'k < kend; k = kend) {')),
+ 'failed_fill_last_key_skipped': ('failed_fill', rep('k < kend; ++k) {', 'k + 1 < kend; ++k) {')),
 }
 only = sys.argv[4:]
 os.makedirs(OUT, exist_ok=True)
@@ -73,7 +77,7 @@ def build_and_run(name):
     if name == 'revert_all':   # the previous header does not have the unpacker fix either
         for item in ['msgpack/unpack.hpp', 'msgpack/object.hpp']:
             shutil.copy(f'{W}/{item}', f'{d}/{item}')
-    test = {'diff': 'diff_test.cc', 'lifetime': 'lifetime_test.cc', 'alloc': 'alloc_test.cc', 'merge': 'merge_test.cc', 'growth': 'growth_test.cc'}[kind]
+    test = {'diff': 'diff_test.cc', 'lifetime': 'lifetime_test.cc', 'alloc': 'alloc_test.cc', 'merge': 'merge_test.cc', 'growth': 'growth_test.cc', 'failed_fill': 'failed_fill_test.cc'}[kind]
     exe = f'{d}/t'
     cmd = ['nice', '-n', '10', os.environ.get('CXX', 'c++'), '-std=c++20', '-O1', '-g', '-Wno-deprecated-declarations', f'-I{d}', f'-I{d}/test'] + INC + [DEF, f'{d}/test/{test}', EXC, '-o', exe] + os.environ.get('SAN', '').split() + (['-pthread'] if kind == 'lifetime' else [])
     r = subprocess.run(cmd, capture_output=True, text=True, errors='replace')
