@@ -63,6 +63,13 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 	target_link_libraries(msgpack_test PRIVATE msgpack)
 	add_test(NAME msgpack COMMAND msgpack_test)
 
+	# Every result of unserialise, hash(), to_string() and the operations around them against the
+	# frozen implementation in test/frozen_msgpack.h (class MsgPackOld), on random documents.
+	add_executable(msgpack_diff_test test/diff_test.cc)
+	target_link_libraries(msgpack_diff_test PRIVATE msgpack)
+	target_include_directories(msgpack_diff_test PRIVATE test)
+	add_test(NAME msgpack_diff COMMAND msgpack_diff_test)
+
 	add_executable(msgpack_demo examples/demo.cc)
 	target_link_libraries(msgpack_demo PRIVATE msgpack)
 
