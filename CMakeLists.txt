@@ -109,6 +109,41 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 	add_executable(msgpack_demo examples/demo.cc)
 	target_link_libraries(msgpack_demo PRIVATE msgpack)
 
-	add_executable(msgpack_benchmark benchmarks/pack_unpack.cc)
-	target_link_libraries(msgpack_benchmark PRIVATE msgpack)
+	# The benchmarks. OFF by default: the comparison libraries below are fetched only when it is ON, by the
+	# benchmark targets alone; the library target and the tests never see them.
+	#   msgpack_benchmark  MsgPack against the msgpack-c it bundles (benchmarks/pack_unpack.cc)
+	#   msgpack_compare    msgpack-c (current), nlohmann::json, mpack, RapidJSON (benchmarks/compare.cc)
+	# benchmarks/compare.py joins their output.
+	option(MSGPACK_BUILD_BENCH "Build the benchmarks and fetch the comparison libraries" OFF)
+	if(MSGPACK_BUILD_BENCH)
+		add_executable(msgpack_benchmark benchmarks/pack_unpack.cc)
+		target_link_libraries(msgpack_benchmark PRIVATE msgpack)
+		target_include_directories(msgpack_benchmark PRIVATE benchmarks)
+
+		# Header-only comparators are populated, not configured (SOURCE_SUBDIR names a directory that does not
+		# exist, so FetchContent sets <name>_SOURCE_DIR and skips their own CMake projects).
+		FetchContent_Declare(msgpack_c_current GIT_REPOSITORY https://github.com/msgpack/msgpack-c.git GIT_TAG cpp-9.0.0 SOURCE_SUBDIR do-not-configure)
+		FetchContent_Declare(nlohmann_json GIT_REPOSITORY https://github.com/nlohmann/json.git GIT_TAG v3.12.0 SOURCE_SUBDIR do-not-configure)
+		FetchContent_Declare(mpack GIT_REPOSITORY https://github.com/ludocode/mpack.git GIT_TAG v1.1.1 SOURCE_SUBDIR do-not-configure)
+		FetchContent_MakeAvailable(msgpack_c_current nlohmann_json mpack)
+
+		enable_language(C)   # mpack is C
+		add_library(msgpack_bench_mpack STATIC
+			"${mpack_SOURCE_DIR}/src/mpack/mpack-common.c"
+			"${mpack_SOURCE_DIR}/src/mpack/mpack-expect.c"
+			"${mpack_SOURCE_DIR}/src/mpack/mpack-node.c"
+			"${mpack_SOURCE_DIR}/src/mpack/mpack-platform.c"
+			"${mpack_SOURCE_DIR}/src/mpack/mpack-reader.c"
+			"${mpack_SOURCE_DIR}/src/mpack/mpack-writer.c")
+		target_compile_definitions(msgpack_bench_mpack PUBLIC MPACK_HAS_CONFIG=1)
+		target_include_directories(msgpack_bench_mpack PUBLIC benchmarks "${mpack_SOURCE_DIR}/src/mpack")
+
+		add_executable(msgpack_compare benchmarks/compare.cc)
+		target_compile_definitions(msgpack_compare PRIVATE MSGPACK_NO_BOOST)
+		target_include_directories(msgpack_compare PRIVATE
+			benchmarks
+			"${msgpack_c_current_SOURCE_DIR}/include"
+			"${nlohmann_json_SOURCE_DIR}/single_include")
+		target_link_libraries(msgpack_compare PRIVATE msgpack_bench_mpack rapidjson_headers)
+	endif()
 endif()
