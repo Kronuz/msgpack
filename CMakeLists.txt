@@ -97,6 +97,18 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 	target_include_directories(msgpack_replace_lock_test PRIVATE test)
 	add_test(NAME msgpack_replace_lock COMMAND msgpack_replace_lock_test)
 
+	# to_string() and as_document() of a map whose key is not a string.
+	add_executable(msgpack_json_keys_test test/json_keys_test.cc)
+	target_link_libraries(msgpack_json_keys_test PRIVATE msgpack)
+	target_include_directories(msgpack_json_keys_test PRIVATE test)
+	add_test(NAME msgpack_json_keys COMMAND msgpack_json_keys_test)
+
+	# update(): the merge against a model, with maps that throw when they are read.
+	add_executable(msgpack_update_test test/update_test.cc)
+	target_link_libraries(msgpack_update_test PRIVATE msgpack)
+	target_include_directories(msgpack_update_test PRIVATE test)
+	add_test(NAME msgpack_update COMMAND msgpack_update_test)
+
 	# A bounded bug hunt: random sequences of every mutating operation against the model, with bad maps
 	# (a fill that throws) and, in the second program, allocations that fail (a replaced operator new).
 	add_executable(msgpack_hunt_test test/hunt_test.cc)

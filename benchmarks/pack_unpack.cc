@@ -9,6 +9,7 @@
 //   write         value to bytes              MsgPack::serialise        msgpack::pack into an sbuffer
 //   copy          a copy of the value
 //   update        read, set one field, write
+//   merge         read, update() with a two-entry map (one key replaced, one added), write
 //   json-write    value to JSON text          MsgPack::to_string        (msgpack-c has none)
 //   json-read     JSON text to a value        rapidjson::Document, then MsgPack(Document)
 //   hash          MsgPack::hash()
@@ -259,6 +260,18 @@ int main(int argc, char** argv) {
 				bench::keep(s);
 			});
 			bench::row(OURS, dn, "update", r, ck, nb);
+		}
+		if (filter.wants_op("merge")) {
+			const MsgPack patch = {{"score", 99}, {"added", "x"}};
+			std::uint64_t ck = 0;
+			auto r = bench::time_it([&] {
+				MsgPack m = MsgPack::unserialise(bytes);
+				(c.name == "large" ? m[3] : m).update(patch);
+				auto s = m.serialise();
+				ck = s.size();
+				bench::keep(s);
+			});
+			bench::row(OURS, dn, "merge", r, ck, nb);
 		}
 		if (filter.wants_op("json")) {
 			MsgPack m = MsgPack::unserialise(bytes);

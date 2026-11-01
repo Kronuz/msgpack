@@ -234,6 +234,11 @@ private:
 	void _fill(bool recursive, bool lock);
 	void _fill(bool recursive, bool lock) const;
 
+	// update() makes the changes of `_update_apply()` only after `_update_check()` has made the calls
+	// that can throw for a reason other than memory, without changing anything.
+	void _update_check(const MsgPack& o);
+	void _update_apply(const MsgPack& o);
+
 	template <typename M, typename = std::enable_if_t<std::is_same<std::decay_t<M>, MsgPack>::value>>
 	MsgPack::iterator _find(M&& o);
 	template <typename M, typename = std::enable_if_t<std::is_same<std::decay_t<M>, MsgPack>::value>>
@@ -2049,6 +2054,16 @@ inline void MsgPack::push_back(T&& v) {
 
 template <typename M, std::enable_if_t<std::is_same<std::decay_t<M>, MsgPack>::value, int>>
 inline void MsgPack::update(M&& o) {
+	// Everything that can throw for a reason of the arguments (a locked or constant value, a map that has
+	// a key that is not a string, a value that is not a container) is met in the first pass, which
+	// changes nothing, so a throw leaves the value as it was. Only an allocation that fails in the
+	// second pass can leave the entries before it applied.
+	_update_check(o);
+	_update_apply(o);
+}
+
+
+inline void MsgPack::_update_check(const MsgPack& o) {
 	if (_body->_const) {
 		THROW(msgpack::const_error, "Constant object");
 	}
@@ -2056,6 +2071,32 @@ inline void MsgPack::update(M&& o) {
 		assert(!_body->_lock);
 		THROW(msgpack::const_error, "Locked object");
 	}
+	if (o._body->get_type() != Type::MAP) {
+		return;   // `*this = o`: checked above, and the object is built before anything changes
+	}
+	// The same calls, in the same order, as _update_apply() makes, without the ones that change the tree
+	for (const auto& key : o) {
+		const auto& val = o.at(key);
+		auto it = find(key);   // erase() of a key and replace() of a new one go through the same fill and type check
+		if (!val.is_undefined() && it != end()) {
+			auto& item = at(key);
+			if (item.is_map()) {
+				item._update_check(val);
+			} else {
+				if (item._body->_const) {
+					THROW(msgpack::const_error, "Constant object");
+				}
+				if (item._body->_lock) {
+					assert(!item._body->_lock);
+					THROW(msgpack::const_error, "Locked object");
+				}
+			}
+		}
+	}
+}
+
+
+inline void MsgPack::_update_apply(const MsgPack& o) {
 	switch (o._body->get_type()) {
 		case Type::MAP:
 			if (_body->get_type() == Type::UNDEFINED) {
@@ -2070,7 +2111,7 @@ inline void MsgPack::update(M&& o) {
 				} else {
 					auto& item = at(key);
 					if (item.is_map()) {
-						item.update(val);
+						item._update_apply(val);
 					} else {
 						item = val;
 					}
@@ -3368,60 +3409,6 @@ template <typename T, typename M, std::enable_if_t<not std::is_same<std::decay_t
 inline T& operator/=(T& o, const M& m) {
 	return o /= static_cast<T>(m);
 }
-
-
-#ifndef WITHOUT_RAPIDJSON
-namespace msgpack_wrapper {
-	// Makes the handler calls that `rapidjson::Document::Accept` makes for the document that
-	// `as_document()` builds from `o`, and stops at the first one that returns false.
-	template <typename Handler>
-	inline bool accept(const msgpack::object& o, Handler& handler) {
-		switch (o.type) {
-			case msgpack::type::BOOLEAN:
-				return handler.Bool(o.via.boolean);
-			case msgpack::type::POSITIVE_INTEGER:
-				return handler.Uint64(o.via.u64);
-			case msgpack::type::NEGATIVE_INTEGER:
-				return handler.Int64(o.via.i64);
-			case msgpack::type::FLOAT:
-				return handler.Double(o.via.f64);
-			case msgpack::type::BIN: // fall through
-			case msgpack::type::STR:
-				return handler.String(o.via.str.ptr, o.via.str.size);
-			case msgpack::type::ARRAY: {
-				if (!handler.StartArray()) {
-					return false;
-				}
-				const msgpack::object* const pend = o.via.array.ptr + o.via.array.size;
-				for (const msgpack::object* p = o.via.array.ptr; p < pend; ++p) {
-					if (!accept(*p, handler)) {
-						return false;
-					}
-				}
-				return handler.EndArray(o.via.array.size);
-			}
-			case msgpack::type::MAP: {
-				if (!handler.StartObject()) {
-					return false;
-				}
-				const msgpack::object_kv* const pend = o.via.map.ptr + o.via.map.size;
-				for (const msgpack::object_kv* p = o.via.map.ptr; p < pend; ++p) {
-					if (!handler.Key(p->key.via.str.ptr, p->key.via.str.size)) {
-						return false;
-					}
-					if (!accept(p->val, handler)) {
-						return false;
-					}
-				}
-				return handler.EndObject(o.via.map.size);
-			}
-			case msgpack::type::NIL: // fall through
-			default:
-				return handler.Null();
-		}
-	}
-}
-#endif
 
 
 inline std::string MsgPack::to_string([[maybe_unused]] int indent) const {

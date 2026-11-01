@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Mutation and revert checks for unserialise, hash(), to_string(), the merge of repeated keys, the growth of
-arrays, the fill of a map that has a key that is not a string, replace() over a value that was read, and lock().
+arrays, the fill of a map that has a key that is not a string, replace() over a value that was read, lock(), the JSON
+text of a key that is not a string, and update().
 Each mutant edits one thing in msgpack.h and
 must make a named test fail (a nonzero exit, a crash or a timeout); a control with no edit must pass. A revert
 of unserialise, hash() or to_string() puts the previous implementation of one of the three back and must fail
@@ -86,7 +87,24 @@ mutants = {
  'put_array_keeps_size': ('hunt_alloc', rep('_body->_obj->via.array.size = _body->array.size();   // an allocation failed: nothing is added', '', 2)),
  'reserve_map_repoints_late': ('hunt_alloc', rep('_update_map(0);   // the children point into the new buffer before anything can fail\n\t\t\t_init_map(_body->map.size());', '_init_map(_body->map.size());\n\t\t\t_update_map(0);')),
  'reserve_array_repoints_late': ('hunt_alloc', rep('_update_array(0);   // the children point into the new buffer before anything can fail\n\t\t\t_init_array(_body->array.size());', '_init_array(_body->array.size());\n\t\t\t_update_array(0);')),
+ # update(): the arguments are checked before anything changes
+ 'update_no_check': ('update', rep('_update_check(o);\n\t_update_apply(o);', '_update_apply(o);')),
+ 'update_check_after_apply': ('update', rep('_update_check(o);\n\t_update_apply(o);', '_update_apply(o);\n\t_update_check(o);')),
+ 'update_check_skips_nested': ('update', rep('item._update_check(val);', '(void)val;')),
+ 'update_check_skips_erase_read': ('update', rep('auto it = find(key);', 'auto it = val.is_undefined() ? end() : find(key);')),
+ 'update_check_skips_source': ('update', rep('if (o._body->get_type() != Type::MAP) {\n\t\treturn;', 'if (o._body->get_type() != Type::MAP || o.size() > 1) {\n\t\treturn;')),
+ 'update_check_skips_const': ('update', rep('\tif (_body->_const) {\n\t\tTHROW(msgpack::const_error, "Constant object");\n\t}\n\tif (_body->_lock) {\n\t\tassert(!_body->_lock);\n\t\tTHROW(msgpack::const_error, "Locked object");\n\t}\n\tif (o._body->get_type() != Type::MAP) {', '\tif (o._body->get_type() != Type::MAP) {')),
 }
+# Mutants of xchange/rapidjson.hpp: (kind, a no-op edit of msgpack.h, the edit of the adaptor). The key of a map
+# entry that is not a string is written as its JSON text.
+xmutants = {
+ 'key_read_as_str': ('json_keys', lambda s: s, rep('const std::string text = json_key(key);\n\t\t\t\treturn handler.Key(text.data(), static_cast<rapidjson::SizeType>(text.size()));', 'return handler.Key(key.via.str.ptr, key.via.str.size);')),
+ 'convert_key_read_as_str': ('json_keys', lambda s: s, rep('const std::string text = msgpack_wrapper::json_key(ptr->key);\n\t\t\t\t\t\t\tkey.SetString(text.data(), static_cast<rapidjson::SizeType>(text.size()), v.GetAllocator());', 'key.SetString(ptr->key.via.str.ptr, ptr->key.via.str.size, v.GetAllocator());')),
+ 'key_nan_not_written': ('json_keys', lambda s: s, rep('rapidjson::CrtAllocator, rapidjson::kWriteNanAndInfFlag>', 'rapidjson::CrtAllocator, rapidjson::kWriteDefaultFlags>')),
+ 'bin_key_as_json': ('json_keys', lambda s: s, rep('case msgpack::type::BIN:\n\t\t\t\treturn handler.Key(key.via.bin.ptr, key.via.bin.size);\n', '')),
+ 'ext_written_as_false': ('json_keys', lambda s: s, rep('case msgpack::type::NIL: // fall through\n\t\t\tdefault:\n\t\t\t\treturn handler.Null();', 'case msgpack::type::NIL: // fall through\n\t\t\tdefault:\n\t\t\t\treturn handler.Bool(false);')),
+}
+mutants.update({k: v[:2] for k, v in xmutants.items()})
 only = sys.argv[4:]
 os.makedirs(OUT, exist_ok=True)
 
@@ -99,10 +117,15 @@ def build_and_run(name):
         p = f'{W}/{item}'
         (shutil.copytree if os.path.isdir(p) else shutil.copy)(p, f'{d}/{item}')
     open(f'{d}/msgpack.h', 'w').write(f(src))
+    if name in xmutants:
+        with open(f'{d}/xchange/rapidjson.hpp') as fh:
+            adaptor = fh.read()
+        with open(f'{d}/xchange/rapidjson.hpp', 'w') as fh:
+            fh.write(xmutants[name][2](adaptor))
     if name == 'revert_all':   # the previous header does not have the unpacker fix either
         for item in ['msgpack/unpack.hpp', 'msgpack/object.hpp']:
             shutil.copy(f'{W}/{item}', f'{d}/{item}')
-    test = {'diff': 'diff_test.cc', 'lifetime': 'lifetime_test.cc', 'alloc': 'alloc_test.cc', 'merge': 'merge_test.cc', 'growth': 'growth_test.cc', 'failed_fill': 'failed_fill_test.cc', 'replace_lock': 'replace_lock_test.cc', 'hunt': 'hunt_test.cc', 'hunt_alloc': 'hunt_test.cc'}[kind]
+    test = {'diff': 'diff_test.cc', 'lifetime': 'lifetime_test.cc', 'alloc': 'alloc_test.cc', 'merge': 'merge_test.cc', 'growth': 'growth_test.cc', 'failed_fill': 'failed_fill_test.cc', 'replace_lock': 'replace_lock_test.cc', 'hunt': 'hunt_test.cc', 'hunt_alloc': 'hunt_test.cc', 'json_keys': 'json_keys_test.cc', 'update': 'update_test.cc'}[kind]
     exe = f'{d}/t'
     cmd = ['nice', '-n', '10', os.environ.get('CXX', 'c++'), '-std=c++20', '-O1', '-g', '-Wno-deprecated-declarations', f'-I{d}', f'-I{d}/test'] + INC + [DEF, f'{d}/test/{test}', EXC, '-o', exe] + os.environ.get('SAN', '').split() + (['-pthread'] if kind == 'lifetime' else []) + (['-DHUNT_INJECT_ALLOC'] if kind == 'hunt_alloc' else [])
     r = subprocess.run(cmd, capture_output=True, text=True, errors='replace')

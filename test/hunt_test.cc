@@ -303,28 +303,30 @@ const char* const op_names[N_OPS] = {
 	"erase_iter", "clear", "reserve", "assign", "bulk", "copy", "move", "read",
 };
 
-// Model of MsgPack::update(map): the merge of o into d. A bad map is a map to update(): merging an empty
-// map into it changes nothing, merging anything else has to fill it and throws (ModelStop), and a value
-// that is not a map replaces it.
-struct ModelStop {};
-
-void model_update(Doc& d, const Doc& o) {
-	if (o.kind != Doc::MAP) {
+// Model of MsgPack::update(map): the merge of o into d, as false when update() throws (a map that has a
+// key that is not a string, in the way of the merge) and then changes nothing: d is discarded. A bad
+// map is a map to update(): merging an empty map into it changes nothing, merging anything else has to
+// read it by key, and a value that is not a map replaces it. d is a map (or a bad map) here, so there
+// is no value that is not a container to read by key.
+bool model_update(Doc& d, const Doc& o) {
+	if (o.kind != Doc::MAP && !is_bad_map(o)) {
 		d = o;
-		return;
+		return true;
 	}
+	if (is_bad_map(o)) return false;
+	if (o.m.empty()) return true;
+	if (is_bad_map(d)) return false;
 	for (const auto& kv : o.m) {
 		Doc* item = d.find(kv.first);
 		if (!item) {
 			d.set(kv.first, kv.second);
-		} else if (item->kind == Doc::MAP) {
-			model_update(*item, kv.second);
-		} else if (is_bad_map(*item) && kv.second.kind == Doc::MAP) {
-			if (!kv.second.m.empty()) throw ModelStop();
+		} else if (item->kind == Doc::MAP || is_bad_map(*item)) {
+			if (!model_update(*item, kv.second)) return false;
 		} else {
 			*item = kv.second;
 		}
 	}
+	return true;
 }
 
 struct Stats {
@@ -438,10 +440,9 @@ bool apply(Subject& s, MsgPack& m, Doc& d, Op op, Rng& r, bool is_root) {
 		case OP_UPDATE:
 			if (d.kind == Doc::MAP) {
 				Doc o = Doc::map();
-				for (std::uint64_t i = 0, n = r.below(4); i < n; ++i) o.set(key_of(r), rand_doc(r, 1, false));
+				for (std::uint64_t i = 0, n = r.below(4); i < n; ++i) o.set(key_of(r), rand_doc(r, 1, true));
 				Doc merged = d;
-				bool model_stops = false;
-				try { model_update(merged, o); } catch (const ModelStop&) { model_stops = true; }
+				const bool model_stops = !model_update(merged, o);
 				bool stopped = false;
 				if (run([&] {
 					try {
@@ -453,8 +454,7 @@ bool apply(Subject& s, MsgPack& m, Doc& d, Op op, Rng& r, bool is_root) {
 				})) return true;
 				if (stopped != model_stops) fail("update() and a bad map in its way", stopped ? "threw" : "did not throw", model_stops ? "throws" : "does not throw");
 				if (stopped) {
-					g_threw = true;   // the entries before the bad map were applied: the model is read back
-					++stats.update_stopped;
+					++stats.update_stopped;   // it changed nothing: the document is compared with the model as it was
 					return true;
 				}
 				d = merged;
@@ -554,7 +554,7 @@ bool apply(Subject& s, MsgPack& m, Doc& d, Op op, Rng& r, bool is_root) {
 				const Op o = Op(r2.below(OP_COPY));
 				try {
 					apply(s, c, cd, o, r2, false);
-					if (g_threw) {   // an update() that stopped at a bad map: the copy's model is read back
+					if (g_threw) {   // an injected allocation failure: the copy's model is read back
 						cd = from_bytes(c.serialise());
 						g_threw = false;
 					}
@@ -668,13 +668,8 @@ void run_one(std::uint64_t seed, std::size_t steps) {
 		try {
 			apply(s, *m, *d, op, r, is_root);
 		} catch (const BaseException& e) {
-			// update() merges into the maps it meets, and a bad map in its way throws when it is filled,
-			// after the entries before it were applied (not atomic, listed in the CHANGELOG)
-			if (op != OP_UPDATE || std::string(e.get_message()).find(kMessage) == std::string::npos) {
-				fail(std::string("an operation threw: ") + e.get_message(), "exception", "none");
-			}
-			g_threw = true;
-			++stats.update_stopped;
+			// update() stops at a bad map in its way inside apply() and changes nothing; nothing else throws
+			fail(std::string("an operation threw: ") + e.get_message(), "exception", "none");
 		} catch (const std::exception& e) {
 			fail(std::string("an operation threw: ") + e.what(), "exception", "none");
 		}
@@ -705,6 +700,16 @@ void run_one(std::uint64_t seed, std::size_t steps) {
 				const std::string text = s.root.to_string();
 				parsed.Parse(text.c_str(), text.size());
 				CHECK_SAME("the document through to_string() and a parse", MsgPack(parsed).serialise(), s.doc.bytes());
+			} else {
+				// a map with a key that is not a string is written with the key as its JSON text (the rule of the README)
+				const std::string bytes = s.doc.bytes();
+				CHECK_SAME("to_string() with a bad map", s.root.to_string(), model::reference_json(bytes));
+				CHECK_SAME("to_string(2) with a bad map", s.root.to_string(2), model::reference_json(bytes, 2));
+				rapidjson::Document as_doc = s.root.as_document();
+				rapidjson::StringBuffer buffer;
+				rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+				as_doc.Accept(writer);
+				CHECK_SAME("as_document() with a bad map", std::string(buffer.GetString(), buffer.GetSize()), model::reference_json(bytes));
 			}
 		}
 	}

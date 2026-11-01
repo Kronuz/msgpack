@@ -24,8 +24,100 @@
 
 #pragma once
 
+#include <string>                // for std::string
+
 #include "msgpack.hpp"           // for msgpack::object
 #include "rapidjson/document.h"  // for GenericDocument
+#include "rapidjson/stringbuffer.h"  // for StringBuffer
+#include "rapidjson/writer.h"    // for Writer
+
+
+namespace msgpack_wrapper {
+
+	// The text a map key is written as in JSON, which has string keys only: the compact JSON text of
+	// the key. A number, boolean or null key `5`, `-1.5`, `true`, `null` is written as that text, an
+	// array or map key as its own JSON text, a float that is not finite as `NaN`, `Infinity` or
+	// `-Infinity`, and an ext key (which JSON has no value for) as `null`. Two keys can give the same
+	// text (`5` and `"5"`), and then the JSON repeats the key. A str or bin key is written as it is
+	// and does not come here.
+	inline std::string json_key(const msgpack::object& key);
+
+	// Makes the handler calls that `rapidjson::Document::Accept` makes for the document that
+	// `as_document()` builds from `o`, and stops at the first one that returns false.
+	template <typename Handler>
+	inline bool accept(const msgpack::object& o, Handler& handler);
+
+	// The handler call for the key of a map entry.
+	template <typename Handler>
+	inline bool accept_key(const msgpack::object& key, Handler& handler) {
+		switch (key.type) {
+			case msgpack::type::STR:
+				return handler.Key(key.via.str.ptr, key.via.str.size);
+			case msgpack::type::BIN:
+				return handler.Key(key.via.bin.ptr, key.via.bin.size);
+			default: {
+				const std::string text = json_key(key);
+				return handler.Key(text.data(), static_cast<rapidjson::SizeType>(text.size()));
+			}
+		}
+	}
+
+	template <typename Handler>
+	inline bool accept(const msgpack::object& o, Handler& handler) {
+		switch (o.type) {
+			case msgpack::type::BOOLEAN:
+				return handler.Bool(o.via.boolean);
+			case msgpack::type::POSITIVE_INTEGER:
+				return handler.Uint64(o.via.u64);
+			case msgpack::type::NEGATIVE_INTEGER:
+				return handler.Int64(o.via.i64);
+			case msgpack::type::FLOAT:
+				return handler.Double(o.via.f64);
+			case msgpack::type::STR:
+				return handler.String(o.via.str.ptr, o.via.str.size);
+			case msgpack::type::BIN:
+				return handler.String(o.via.bin.ptr, o.via.bin.size);
+			case msgpack::type::ARRAY: {
+				if (!handler.StartArray()) {
+					return false;
+				}
+				const msgpack::object* const pend = o.via.array.ptr + o.via.array.size;
+				for (const msgpack::object* p = o.via.array.ptr; p < pend; ++p) {
+					if (!accept(*p, handler)) {
+						return false;
+					}
+				}
+				return handler.EndArray(o.via.array.size);
+			}
+			case msgpack::type::MAP: {
+				if (!handler.StartObject()) {
+					return false;
+				}
+				const msgpack::object_kv* const pend = o.via.map.ptr + o.via.map.size;
+				for (const msgpack::object_kv* p = o.via.map.ptr; p < pend; ++p) {
+					if (!accept_key(p->key, handler)) {
+						return false;
+					}
+					if (!accept(p->val, handler)) {
+						return false;
+					}
+				}
+				return handler.EndObject(o.via.map.size);
+			}
+			case msgpack::type::NIL: // fall through
+			default:
+				return handler.Null();
+		}
+	}
+
+	inline std::string json_key(const msgpack::object& key) {
+		rapidjson::StringBuffer buffer;
+		rapidjson::Writer<rapidjson::StringBuffer, rapidjson::UTF8<>, rapidjson::UTF8<>, rapidjson::CrtAllocator, rapidjson::kWriteNanAndInfFlag> writer(buffer);
+		accept(key, writer);
+		return std::string(buffer.GetString(), buffer.GetSize());
+	}
+
+}
 
 
 namespace msgpack { MSGPACK_API_VERSION_NAMESPACE(MSGPACK_DEFAULT_API_NS) { namespace adaptor {
@@ -46,10 +138,12 @@ namespace msgpack { MSGPACK_API_VERSION_NAMESPACE(MSGPACK_DEFAULT_API_NS) { name
 				case msgpack::type::FLOAT:
 					v.SetDouble(o.via.f64);
 					break;
-				case msgpack::type::BIN: // fall through
 				case msgpack::type::STR:
 					// Copied: msgpack's bytes are not NUL-terminated and do not outlive the object.
 					v.SetString(o.via.str.ptr, o.via.str.size, v.GetAllocator());
+					break;
+				case msgpack::type::BIN:
+					v.SetString(o.via.bin.ptr, o.via.bin.size, v.GetAllocator());
 					break;
 				case msgpack::type::ARRAY: {
 					v.SetArray();
@@ -68,7 +162,16 @@ namespace msgpack { MSGPACK_API_VERSION_NAMESPACE(MSGPACK_DEFAULT_API_NS) { name
 					msgpack::object_kv* ptr = o.via.map.ptr;
 					msgpack::object_kv* END = ptr + o.via.map.size;
 					for (; ptr < END; ++ptr) {
-						rapidjson::GenericValue<Encoding, Allocator> key(ptr->key.via.str.ptr, ptr->key.via.str.size, v.GetAllocator());
+						// A key that is not a string is written as its JSON text (see msgpack_wrapper::json_key).
+						rapidjson::GenericValue<Encoding, Allocator> key;
+						if (ptr->key.type == msgpack::type::STR) {
+							key.SetString(ptr->key.via.str.ptr, ptr->key.via.str.size, v.GetAllocator());
+						} else if (ptr->key.type == msgpack::type::BIN) {
+							key.SetString(ptr->key.via.bin.ptr, ptr->key.via.bin.size, v.GetAllocator());
+						} else {
+							const std::string text = msgpack_wrapper::json_key(ptr->key);
+							key.SetString(text.data(), static_cast<rapidjson::SizeType>(text.size()), v.GetAllocator());
+						}
 						rapidjson::GenericDocument<Encoding, Allocator, StackAllocator> val(&v.GetAllocator());
 						ptr->val.convert(&val);
 
