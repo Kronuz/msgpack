@@ -28,7 +28,13 @@ test/frozen_msgpack.h         The earlier msgpack.h with MsgPack renamed MsgPack
 test/lifetime_test.cc         ctest msgpack_lifetime: values outlive the input, the other values and threads.
 test/alloc_test.cc            ctest msgpack_alloc: allocation counts of unserialise, hash() and to_string() against the frozen copy.
 tools/mutants.py              Edits the implementation 29 ways (the previous unserialise, hash() and to_string() put back; the merge, growth and failed-fill fixes undone and broken eight more ways); a test must fail on each.
-benchmarks/pack_unpack.cc     Small pack/unpack throughput harness.
+benchmarks/pack_unpack.cc     msgpack_benchmark: MsgPack against the msgpack-c it bundles, on the corpus (read, walk, lookups, write, copy, update, JSON, hash).
+benchmarks/compare.cc         msgpack_compare: msgpack-c (current), nlohmann::json, mpack and RapidJSON on the same corpus and operations.
+benchmarks/corpus.h           The four documents (small, med, large, wide) as MessagePack bytes and JSON text, written without a msgpack library.
+benchmarks/bench_util.h       Timer, output row and checksum helpers shared by the two programs.
+benchmarks/compare.py         Joins the two outputs into one table per document and checks that the libraries read the same document.
+benchmarks/mpack-config.h     The mpack build configuration for msgpack_compare.
+docs/perf/survey-2026-10.md   What the benchmarks measure on arm64 and x86-64, where the time goes, what the fast paths must keep identical, what is open.
 CHANGELOG.md                  Dated changes, numbers and known problems.
 ```
 
@@ -61,8 +67,21 @@ cmake -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ctest --test-dir build
 ./build/msgpack_demo
-./build/msgpack_benchmark
 ```
+
+Benchmarks (off by default; `MSGPACK_BUILD_BENCH` fetches msgpack-c, nlohmann::json and mpack at pinned tags for
+`msgpack_compare` only, and RapidJSON is already a dependency). Run them on a quiet machine:
+
+```sh
+cmake -B build-bench -DCMAKE_BUILD_TYPE=Release -DMSGPACK_BUILD_BENCH=ON
+cmake --build build-bench --target msgpack_benchmark msgpack_compare
+./build-bench/msgpack_benchmark > ours.txt
+./build-bench/msgpack_compare > compare.txt
+python3 benchmarks/compare.py ours.txt compare.txt
+```
+
+`BENCH_QUICK=1` shortens every row for a run that only checks that the programs work; both programs take an
+optional document name and an operation substring (`msgpack_benchmark med read`).
 
 For Xapiand integration, configure Xapiand with `-DFETCHCONTENT_SOURCE_DIR_MSGPACK=/path/to/msgpack` and define `MSGPACK_EXCEPTION_HEADER` to Xapiand's `src/exception.h`.
 

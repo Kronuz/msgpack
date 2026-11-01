@@ -6,6 +6,29 @@ releases, so entries are dated.
 
 ## 2026-11-01
 
+### Added
+
+- Benchmarks against other libraries, off by default (`-DMSGPACK_BUILD_BENCH=ON`).
+  `msgpack_benchmark` (`benchmarks/pack_unpack.cc`) times `MsgPack` and the msgpack-c it
+  bundles; `msgpack_compare` (`benchmarks/compare.cc`) times msgpack-c 9.0.0, nlohmann::json
+  3.12.0, mpack 1.1.1 and RapidJSON, fetched at those tags by the benchmark targets only.
+  Both read the four documents of `benchmarks/corpus.h` (63 B, 502 B, 104 KB, 8.9 KB; MessagePack
+  bytes and JSON text, written without a msgpack library) and print rows with the same operation
+  names and a checksum of the document; `benchmarks/compare.py` joins the outputs and fails
+  when libraries that read the same bytes disagree. The numbers on arm64 (Apple M1 Pro) and
+  x86-64 (Intel Core i9-9980HK), where the time goes and what the fast paths keep identical
+  are in `docs/perf/survey-2026-10.md`. The small throughput loop in `benchmarks/pack_unpack.cc`
+  is replaced by `msgpack_benchmark`, which is no longer built by default.
+- The cost of the failed-fill check, measured with the benchmarks on the two machines: the tree
+  of the commit before it against the tree with it, run alternately three times. On arm64 the
+  rows that fill maps (`read+walk`, `read+lookup3`, `update`) change by 0.9% at most on the med,
+  large and wide documents (the small document is 1 to 6% faster), and no row moves by more than
+  6%. The `write` rows read 2.4 to 3.8% slower in a default build although the change does not
+  touch that path; with every function aligned to 64 bytes (`-falign-functions=64`) in both trees
+  they read 0.98 to 1.00, so the difference is where the compiler puts the code. On x86-64 (a
+  shared machine, the repeated `read` row varies 3% on its own) every row is within 6.4%, and the
+  fill rows within 2.2%, except `update` of the wide document at 4.4% faster.
+
 ### Fixed
 
 - A map that repeats a key is merged correctly. The last value wins and the entry
@@ -139,17 +162,18 @@ Each needs an owner decision.
   built, in the same order and stopping at the first `false`; the Document is not
   built. The text is identical, including the partial text before a `NaN` or
   `Inf` and the indented form. arm64: 2.2x to 2.5x / 1.5x / 1.3x to 1.5x / 1.5x to 1.65x
-  (two holds, noisy rows); x86_64 1.75x / 1.58x / 1.68x / 1.83x. `as_document()` is unchanged.
+  (two runs, noisy rows); x86_64 1.75x / 1.58x / 1.68x / 1.83x. `as_document()` is unchanged.
 
-Measured with `bench_ours` from the campaign's cluster J harness (outside this repository):
+Measured with a benchmark harness that was not yet part of this repository (the rows of
+`msgpack_benchmark` are the same operations; see `docs/perf/survey-2026-10.md`):
 `unserialise`, `hash()`, `to_string()` and the rows around them over four documents of 63 B,
 0.5 KB, 104 KB and 8.9 KB. The frozen and the new header are built side by side with `-O3`
 and run interleaved (old, new, old, new).
 
-- arm64: M4 Pro, Apple clang 17, one `quiet` strict hold, 3 passes; the A/A rows differ by
+- arm64: M4 Pro, Apple clang 17, the machine to itself, 3 passes; the A/A rows differ by
   at most 3%.
-- x86_64: i9-9980HK, Apple clang 17, one strict hold, 2 passes. `hash()` comes from a second
-  hold with the final header, 5 rounds.
+- x86_64: i9-9980HK, Apple clang 17, the machine to itself, 2 passes. `hash()` comes from a second
+  run with the final header, 5 rounds.
 - A GitHub runner (AMD EPYC 7763, 4 vCPUs, 3 interleaved passes, noisier): 1.54x to 1.61x
   for `unserialise`, 5.50x / 2.72x / 1.13x for `hash()`, 1.42x to 1.65x for `to_string()`.
 - Every checksum of the 240 rows (every wire type, the repeated-key document included) is

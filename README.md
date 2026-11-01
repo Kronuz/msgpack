@@ -89,8 +89,30 @@ int main() {
 ```sh
 cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build
 ctest --test-dir build
-./build/msgpack_demo && ./build/msgpack_benchmark
+./build/msgpack_demo
 ```
+
+The benchmarks are off by default; `-DMSGPACK_BUILD_BENCH=ON` builds `msgpack_benchmark` (MsgPack against
+the msgpack-c it bundles) and `msgpack_compare` (msgpack-c, nlohmann::json, mpack and RapidJSON, fetched at
+pinned tags by those targets only). See [Performance](#-performance).
+
+## 🚀 Performance
+
+`msgpack_benchmark` and `msgpack_compare` (see Building and testing) time the same operations on four documents
+(63 B to 104 KB) and `benchmarks/compare.py` joins them. On an Apple M1 Pro (Apple clang 21, `-O3`), for the
+0.5 KB record, in ns:
+
+| operation | MsgPack | compared with |
+|---|---|---|
+| `unserialise` | 891 | msgpack-c 1.3.0 `unpack` 839, nlohmann `from_msgpack` 5,597, mpack 383 |
+| `serialise` | 602 | msgpack-c 1.3.0 `pack` 550, nlohmann `to_msgpack` 1,507 |
+| `to_string` | 1,515 | RapidJSON Writer over a DOM 1,516, nlohmann `dump` 2,380 |
+| read, set one field, write | 2,731 | nlohmann 7,076 |
+| `unserialise`, then visit every node | 5,877 | msgpack-c 1.3.0 1,362, mpack 1,090 |
+
+The first read or change of a map or array through the API fills a `Body` per node, which makes visiting a freshly
+read value 5 to 10 times slower than in mpack or msgpack-c. [docs/perf/survey-2026-10.md](docs/perf/survey-2026-10.md)
+has both machines (arm64 and x86-64), every operation, where the time goes and what is open.
 
 ## 🤝 Contributing
 
