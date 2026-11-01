@@ -627,12 +627,19 @@ std::vector<std::string> run(const std::string& bytes, const Doc& doc, const std
 				if (mode.mutate) step("mutate", [&] { mutate(cur, s.arg); return hex(cur.serialise()); });
 				break;
 			case ERASE:
+				// What erase() returns is not compared: the frozen implementation returns 0 for the last
+				// element of a map or an array, which it did erase (see the CHANGELOG). The change in size
+				// says how many were erased.
 				if (mode.mutate) step("erase", [&] {
 					if (cur.is_map()) {
-						return std::to_string(cur.erase(std::string_view("a"))) + " " + hex(cur.serialise());
+						const std::size_t before = cur.size();
+						cur.erase(std::string_view("a"));
+						return std::to_string(before - cur.size()) + " " + hex(cur.serialise());
 					}
 					if (cur.is_array()) {
-						return std::to_string(cur.erase(static_cast<std::size_t>(0))) + " " + hex(cur.serialise());
+						const std::size_t before = cur.size();
+						cur.erase(static_cast<std::size_t>(0));
+						return std::to_string(before - cur.size()) + " " + hex(cur.serialise());
 					}
 					return std::string("scalar");
 				});

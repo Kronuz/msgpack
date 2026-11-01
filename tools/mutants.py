@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Mutation and revert checks for unserialise, hash(), to_string(), the merge of repeated keys, the growth of
-arrays and the fill of a map that has a key that is not a string. Each mutant edits one thing in msgpack.h and
+arrays, the fill of a map that has a key that is not a string, replace() over a value that was read, and lock().
+Each mutant edits one thing in msgpack.h and
 must make a named test fail (a nonzero exit, a crash or a timeout); a control with no edit must pass. A revert
 of unserialise, hash() or to_string() puts the previous implementation of one of the three back and must fail
-the allocation test; revert_merge, revert_growth and revert_failed_fill undo the three fixes.
+the allocation test; revert_merge, revert_growth, revert_failed_fill, revert_replace and revert_lock undo the fixes.
 
 usage: tools/mutants.py REPO DEPS_DIR OUT_DIR [NAME...]
   DEPS_DIR is the `_deps` directory of a configured CMake build (the dependencies' sources).
@@ -22,6 +23,16 @@ def rep(old, new, count=1):
     def f(s):
         assert s.count(old) >= 1, old
         return s.replace(old, new, count)
+    return f
+
+def rep_nth(old, new, n):
+    """Replaces the n-th occurrence (1-based) and no other."""
+    def f(s):
+        assert s.count(old) >= n, old
+        i = -1
+        for _ in range(n):
+            i = s.index(old, i + 1)
+        return s[:i] + new + s[i + len(old):]
     return f
 
 def previous(path):
@@ -61,6 +72,20 @@ mutants = {
  'revert_failed_fill': ('failed_fill', lambda s: rep('assert(p->key.type == msgpack::type::STR);', 'if (p->key.type != msgpack::type::STR) { THROW(msgpack::type_error, "MAP keys must be of type STR"); }')(rep('if (k->key.type != msgpack::type::STR) {', 'if (false) {')(s))),
  'failed_fill_first_key_only': ('failed_fill', rep('k < kend; ++k) {', 'k < kend; k = kend) {')),
  'failed_fill_last_key_skipped': ('failed_fill', rep('k < kend; ++k) {', 'k + 1 < kend; ++k) {')),
+ # replace() over a value that was read, and lock()
+ 'revert_replace': ('replace_lock', rep('old_value._deinitialize();', '', 2)),
+ 'replace_map_keeps_index': ('replace_lock', rep('old_value._deinitialize();', '', 1)),
+ 'replace_array_keeps_index': ('replace_lock', rep_nth('old_value._deinitialize();', '', 2)),
+ 'replace_capacity_kept': ('replace_lock', rep('old_value._body->_capacity = old_value._body->size();', '', 2)),
+ 'revert_lock': ('replace_lock', rep('_fill(true, false);\n\t_fill(true, true);', '_fill(true, true);')),
+ # the hunt: erase() counts, and an allocation that fails (hunt_alloc is built with a replaced operator new, so
+ # run it with SAN unset or -fsanitize=undefined only)
+ 'erase_last_returns_zero': ('hunt', rep('return std::make_pair(1, end());   // the last', 'return std::make_pair(0, end());   // the last', 2)),
+ 'init_map_keeps_partial': ('hunt_alloc', rep('_body->map.erase(std::string_view(q->key.via.str.ptr, q->key.via.str.size));', '(void)q;')),
+ 'put_map_keeps_entry': ('hunt_alloc', rep('--_body->_obj->via.map.size;   // an allocation failed: the entry is not added', '')),
+ 'put_array_keeps_size': ('hunt_alloc', rep('_body->_obj->via.array.size = _body->array.size();   // an allocation failed: nothing is added', '', 2)),
+ 'reserve_map_repoints_late': ('hunt_alloc', rep('_update_map(0);   // the children point into the new buffer before anything can fail\n\t\t\t_init_map(_body->map.size());', '_init_map(_body->map.size());\n\t\t\t_update_map(0);')),
+ 'reserve_array_repoints_late': ('hunt_alloc', rep('_update_array(0);   // the children point into the new buffer before anything can fail\n\t\t\t_init_array(_body->array.size());', '_init_array(_body->array.size());\n\t\t\t_update_array(0);')),
 }
 only = sys.argv[4:]
 os.makedirs(OUT, exist_ok=True)
@@ -77,9 +102,9 @@ def build_and_run(name):
     if name == 'revert_all':   # the previous header does not have the unpacker fix either
         for item in ['msgpack/unpack.hpp', 'msgpack/object.hpp']:
             shutil.copy(f'{W}/{item}', f'{d}/{item}')
-    test = {'diff': 'diff_test.cc', 'lifetime': 'lifetime_test.cc', 'alloc': 'alloc_test.cc', 'merge': 'merge_test.cc', 'growth': 'growth_test.cc', 'failed_fill': 'failed_fill_test.cc'}[kind]
+    test = {'diff': 'diff_test.cc', 'lifetime': 'lifetime_test.cc', 'alloc': 'alloc_test.cc', 'merge': 'merge_test.cc', 'growth': 'growth_test.cc', 'failed_fill': 'failed_fill_test.cc', 'replace_lock': 'replace_lock_test.cc', 'hunt': 'hunt_test.cc', 'hunt_alloc': 'hunt_test.cc'}[kind]
     exe = f'{d}/t'
-    cmd = ['nice', '-n', '10', os.environ.get('CXX', 'c++'), '-std=c++20', '-O1', '-g', '-Wno-deprecated-declarations', f'-I{d}', f'-I{d}/test'] + INC + [DEF, f'{d}/test/{test}', EXC, '-o', exe] + os.environ.get('SAN', '').split() + (['-pthread'] if kind == 'lifetime' else [])
+    cmd = ['nice', '-n', '10', os.environ.get('CXX', 'c++'), '-std=c++20', '-O1', '-g', '-Wno-deprecated-declarations', f'-I{d}', f'-I{d}/test'] + INC + [DEF, f'{d}/test/{test}', EXC, '-o', exe] + os.environ.get('SAN', '').split() + (['-pthread'] if kind == 'lifetime' else []) + (['-DHUNT_INJECT_ALLOC'] if kind == 'hunt_alloc' else [])
     r = subprocess.run(cmd, capture_output=True, text=True, errors='replace')
     if r.returncode != 0:
         return name, kind, 'COMPILE ERROR', r.stderr[-400:]

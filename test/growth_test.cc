@@ -175,6 +175,30 @@ void test_random(std::size_t iterations) {
 	std::printf("random: %zu arrays of maps\n", iterations);
 }
 
+// A reference into an element of an array stays valid when the array grows: the element is the same
+// object at the same position, only in a larger buffer.
+void test_references_survive_growth() {
+	MsgPack a = MsgPack::ARRAY();
+	a.push_back(MsgPack({ { "k", 7 }, { "list", { 1, 2, 3 } }, { "inner", { { "deep", 9 } } } }));
+	a.push_back(MsgPack({ { "k", 8 } }));
+	MsgPack& k = a.at(0)["k"];
+	MsgPack& list = a.at(0)["list"];
+	MsgPack& third = list.at(2);
+	MsgPack& deep = a.at(0)["inner"]["deep"];
+	MsgPack& second_k = a.at(1)["k"];
+	for (int i = 0; i < 100; ++i) {
+		a.push_back(i);   // the array grows several times
+	}
+	CHECK(k.as_u64() == 7);
+	CHECK(list.size() == 3);
+	CHECK(third.as_u64() == 3);
+	CHECK(deep.as_u64() == 9);
+	CHECK(second_k.as_u64() == 8);
+	deep = 10;   // and a change through a reference reaches the array
+	CHECK(a.at(0)["inner"]["deep"].as_u64() == 10);
+	CHECK(a.size() == 102);
+}
+
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -185,6 +209,7 @@ int main(int argc, char** argv) {
 	test_push_and_write(false);
 	test_push_and_write(true);
 	test_random(iterations);
+	test_references_survive_growth();
 	// std::vector moves its elements on reallocation only when the move constructor is noexcept,
 	// and copies them otherwise (every copy has a zone of its own, and the copies' children
 	// write into it). This is the cause of the bug the cases above show under a sanitizer; it

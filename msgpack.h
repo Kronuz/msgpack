@@ -168,7 +168,7 @@ private:
 	void _update_map(size_t pos);
 
 	MsgPack* _init_array(size_t pos);
-	void _update_array(size_t pos);
+	void _update_array(size_t pos, bool other_objects = true);
 
 	void _initialize();
 	void _deinitialize();
@@ -982,34 +982,44 @@ inline MsgPack* MsgPack::_init_map(size_t pos) {
 	}
 	_body->map.reserve(_body->_capacity);
 	auto pend = &_body->_obj->via.map.ptr[_body->_obj->via.map.size];
-	for (auto p = &_body->_obj->via.map.ptr[pos]; p < pend; ++p) {
-		assert(p->key.type == msgpack::type::STR);
-		std::string_view str_key(p->key.via.str.ptr, p->key.via.str.size);
-		auto pit = _body->map.find(str_key);
-		if (pit == _body->map.end()) {
-			auto last_key = MsgPack(std::make_shared<Body>(_body->_zone, _body->_base, _body, true, 0, nullptr, &p->key));
-			auto last_val = MsgPack(std::make_shared<Body>(_body->_zone, _body->_base, _body, false, pos++, last_key._body, &p->val));
-			pit = _body->map.emplace(
-				std::piecewise_construct,
-				std::forward_as_tuple(std::move(str_key)),
-				std::forward_as_tuple(std::move(last_key), std::move(last_val))).first;
-		} else {
-			// A repeated key: the last value wins, in the position of the first. The entry
-			// moves into the value of the first one, and the entries after it move up by one.
-			auto& value_body = *pit->second.second._body;
-			value_body._initialized = false;
-			value_body.map.clear();
-			value_body.array.clear();
-			*value_body._obj = p->val;
-			value_body._capacity = value_body.size();
-			--pend;
-			--_body->_obj->via.map.size;
-			for (auto q = p; q < pend; ++q) {
-				*q = *(q + 1);
+	auto first = &_body->_obj->via.map.ptr[pos];
+	auto p = first;
+	try {
+		for (; p < pend; ++p) {
+			assert(p->key.type == msgpack::type::STR);
+			std::string_view str_key(p->key.via.str.ptr, p->key.via.str.size);
+			auto pit = _body->map.find(str_key);
+			if (pit == _body->map.end()) {
+				auto last_key = MsgPack(std::make_shared<Body>(_body->_zone, _body->_base, _body, true, 0, nullptr, &p->key));
+				auto last_val = MsgPack(std::make_shared<Body>(_body->_zone, _body->_base, _body, false, pos++, last_key._body, &p->val));
+				pit = _body->map.emplace(
+					std::piecewise_construct,
+					std::forward_as_tuple(std::move(str_key)),
+					std::forward_as_tuple(std::move(last_key), std::move(last_val))).first;
+			} else {
+				// A repeated key: the last value wins, in the position of the first. The entry
+				// moves into the value of the first one, and the entries after it move up by one.
+				auto& value_body = *pit->second.second._body;
+				value_body._initialized = false;
+				value_body.map.clear();
+				value_body.array.clear();
+				*value_body._obj = p->val;
+				value_body._capacity = value_body.size();
+				--pend;
+				--_body->_obj->via.map.size;
+				for (auto q = p; q < pend; ++q) {
+					*q = *(q + 1);
+				}
+				--p;  // the entry that moved into this position is next
 			}
-			--p;  // the entry that moved into this position is next
+			ret = &pit->second.second;
 		}
-		ret = &pit->second.second;
+	} catch (...) {
+		// An allocation failed: what this call indexed goes again, so the index is as it was.
+		for (auto q = first; q < p; ++q) {
+			_body->map.erase(std::string_view(q->key.via.str.ptr, q->key.via.str.size));
+		}
+		throw;
 	}
 	assert(_body->_obj->via.map.size == _body->map.size());
 	_body->_initialized = true;
@@ -1047,11 +1057,18 @@ inline MsgPack* MsgPack::_init_array(size_t pos) {
 	}
 
 	MsgPack* ret = nullptr;
-	_body->array.reserve(_body->_capacity);
-	const auto pend = &_body->_obj->via.array.ptr[_body->_obj->via.array.size];
-	for (auto p = &_body->_obj->via.array.ptr[pos]; p < pend; ++p, ++pos) {
-		auto last_val = MsgPack(std::make_shared<Body>(_body->_zone, _body->_base, _body, false, pos, nullptr, p));
-		ret = &*_body->array.emplace(_body->array.end(), std::move(last_val));
+	const size_t start = pos;
+	try {
+		_body->array.reserve(_body->_capacity);
+		const auto pend = &_body->_obj->via.array.ptr[_body->_obj->via.array.size];
+		for (auto p = &_body->_obj->via.array.ptr[pos]; p < pend; ++p, ++pos) {
+			auto last_val = MsgPack(std::make_shared<Body>(_body->_zone, _body->_base, _body, false, pos, nullptr, p));
+			ret = &*_body->array.emplace(_body->array.end(), std::move(last_val));
+		}
+	} catch (...) {
+		// An allocation failed: what this call indexed goes again, so the index is as it was.
+		_body->array.resize(start);
+		throw;
 	}
 	assert(_body->_obj->via.array.size == _body->array.size());
 	_body->_initialized = true;
@@ -1059,22 +1076,26 @@ inline MsgPack* MsgPack::_init_array(size_t pos) {
 }
 
 
-inline void MsgPack::_update_array(size_t pos) {
+inline void MsgPack::_update_array(size_t pos, bool other_objects) {
 	if (_body->_lock) {
 		assert(!_body->_lock);
 		THROW(msgpack::const_error, "Locked object");
 	}
 	const auto pend = &_body->_obj->via.array.ptr[_body->_obj->via.array.size];
 	for (auto p = &_body->_obj->via.array.ptr[pos]; p < pend; ++p, ++pos) {
-		// The element stands for the object now at this position, so what it indexed of the
-		// object that was here is stale: it rebuilds the index of its children when next used.
 		auto& mobj = _body->at(pos);
-		mobj._body->_initialized = false;
-		mobj._body->map.clear();
-		mobj._body->array.clear();
+		if (other_objects) {
+			// The element stands for the object now at this position (an erase moved the later ones
+			// up), so what it indexed of the object that was here is stale: it rebuilds the index of
+			// its children when next used. When the array only moved to a larger buffer the elements
+			// are the same objects, and references to their children stay valid.
+			mobj._body->_initialized = false;
+			mobj._body->map.clear();
+			mobj._body->array.clear();
+			mobj._body->_capacity = mobj._body->size();
+		}
 		mobj._body->_pos = pos;
 		mobj._body->_obj = p;
-		mobj._body->_capacity = mobj._body->size();
 	}
 }
 
@@ -1314,8 +1335,8 @@ inline void MsgPack::_reserve_map(size_t rsize) {
 		_body->_obj->via.map.ptr = ptr;
 		_body->_capacity = nsize;
 		if (_body->_initialized) {
+			_update_map(0);   // the children point into the new buffer before anything can fail
 			_init_map(_body->map.size());
-			_update_map(0);
 		}
 	}
 }
@@ -1339,8 +1360,8 @@ inline void MsgPack::_reserve_array(size_t rsize) {
 		_body->_obj->via.array.ptr = ptr;
 		_body->_capacity = nsize;
 		if (_body->_initialized) {
+			_update_array(0, false);   // the children point into the new buffer before anything can fail
 			_init_array(_body->array.size());
-			_update_array(0);
 		}
 	}
 }
@@ -1494,7 +1515,7 @@ inline std::pair<size_t, MsgPack::iterator> MsgPack::_erase(std::string_view key
 
 			auto next = _body->map.find(std::string_view(p->key.via.str.ptr, p->key.via.str.size));
 			if (next == _body->map.end()) {
-				return std::make_pair(0, end());
+				return std::make_pair(1, end());   // the last entry went: one erased, nothing after it
 			}
 
 			return std::make_pair(1, MsgPack::iterator(this, next->second.second._body->_pos));
@@ -1543,7 +1564,7 @@ inline std::pair<size_t, MsgPack::iterator> MsgPack::_erase(size_t pos) {
 
 			auto next = _body->array.begin() + pos_;
 			if (next >= _body->array.end()) {
-				return std::make_pair(0, end());
+				return std::make_pair(1, end());   // the last element went: one erased, nothing after it
 			}
 
 			return std::make_pair(1, MsgPack::iterator(this, next->_body->_pos));
@@ -1672,12 +1693,25 @@ inline std::pair<MsgPack*, bool> MsgPack::_put(std::string_view key, T&& val, bo
 				p->key.via.str.ptr = ptr;
 				p->val = msgpack::object(std::forward<T>(val), *_body->_zone);
 				++_body->_obj->via.map.size;
-				return std::make_pair(_init_map(_body->map.size()), true);
+				try {
+					return std::make_pair(_init_map(_body->map.size()), true);
+				} catch (...) {
+					--_body->_obj->via.map.size;   // an allocation failed: the entry is not added
+					throw;
+				}
 			} else {
 				auto pos = it->second.second._body->_pos;
 				if (overwrite) {
-					auto p = &_body->_obj->via.map.ptr[pos];
-					p->val = msgpack::object(std::forward<T>(val), *_body->_zone);
+					// The old value is replaced: what its body indexed is not on the new one. The new
+					// object is built first, because that can throw, and a locked value stays as it is.
+					auto& old_value = it->second.second;
+					if (old_value._body->_lock) {
+						THROW(msgpack::const_error, "Locked object");
+					}
+					msgpack::object obj(std::forward<T>(val), *_body->_zone);
+					old_value._deinitialize();
+					_body->_obj->via.map.ptr[pos].val = obj;
+					old_value._body->_capacity = old_value._body->size();
 					return std::make_pair(&_body->at(key), true);
 				}
 				return std::make_pair(&_body->at(key), false);
@@ -1716,13 +1750,25 @@ inline std::pair<MsgPack*, bool> MsgPack::_put(size_t pos, T&& val, bool overwri
 					++_body->_obj->via.array.size;
 				}
 
-				*p = msgpack::object(std::forward<T>(val), *_body->_zone);
-				++_body->_obj->via.array.size;
-				return std::make_pair(_init_array(_body->array.size()), true);
+				try {
+					*p = msgpack::object(std::forward<T>(val), *_body->_zone);
+					++_body->_obj->via.array.size;
+					return std::make_pair(_init_array(_body->array.size()), true);
+				} catch (...) {
+					_body->_obj->via.array.size = _body->array.size();   // an allocation failed: nothing is added
+					throw;
+				}
 			} else {
 				if (overwrite) {
-					auto p = &_body->_obj->via.array.ptr[pos];
-					*p = msgpack::object(std::forward<T>(val), *_body->_zone);
+					// As for a map: build the new object first, then drop the index of the old value.
+					auto& old_value = _body->at(pos);
+					if (old_value._body->_lock) {
+						THROW(msgpack::const_error, "Locked object");
+					}
+					msgpack::object obj(std::forward<T>(val), *_body->_zone);
+					old_value._deinitialize();
+					_body->_obj->via.array.ptr[pos] = obj;
+					old_value._body->_capacity = old_value._body->size();
 					return std::make_pair(&_body->at(pos), true);
 				}
 				return std::make_pair(&_body->at(pos), false);
@@ -1785,9 +1831,14 @@ inline std::pair<MsgPack*, bool> MsgPack::_insert(size_t pos, T&& val, bool over
 					++_body->_obj->via.array.size;
 				}
 
-				*p = msgpack::object(std::forward<T>(val), *_body->_zone);
-				++_body->_obj->via.array.size;
-				return std::make_pair(_init_array(_body->array.size()), true);
+				try {
+					*p = msgpack::object(std::forward<T>(val), *_body->_zone);
+					++_body->_obj->via.array.size;
+					return std::make_pair(_init_array(_body->array.size()), true);
+				} catch (...) {
+					_body->_obj->via.array.size = _body->array.size();   // an allocation failed: nothing is added
+					throw;
+				}
 			} else {
 				if (overwrite) {
 					_reserve_array(_body->_obj->via.array.size + 1);
@@ -1885,6 +1936,9 @@ inline auto MsgPack::external(std::function<T(const msgpack::object&)> f) const 
 
 
 inline void MsgPack::lock() const {
+	// Everything is filled before anything is locked: filling throws for a map with a key that is not
+	// a string, and a lock() that throws leaves nothing locked.
+	_fill(true, false);
 	_fill(true, true);
 }
 

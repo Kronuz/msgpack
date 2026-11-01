@@ -91,19 +91,39 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 	target_include_directories(msgpack_failed_fill_test PRIVATE test)
 	add_test(NAME msgpack_failed_fill COMMAND msgpack_failed_fill_test)
 
+	# replace() over a value that was already read, and a lock() that throws.
+	add_executable(msgpack_replace_lock_test test/replace_lock_test.cc)
+	target_link_libraries(msgpack_replace_lock_test PRIVATE msgpack)
+	target_include_directories(msgpack_replace_lock_test PRIVATE test)
+	add_test(NAME msgpack_replace_lock COMMAND msgpack_replace_lock_test)
+
+	# A bounded bug hunt: random sequences of every mutating operation against the model, with bad maps
+	# (a fill that throws) and, in the second program, allocations that fail (a replaced operator new).
+	add_executable(msgpack_hunt_test test/hunt_test.cc)
+	target_link_libraries(msgpack_hunt_test PRIVATE msgpack)
+	target_include_directories(msgpack_hunt_test PRIVATE test)
+	add_test(NAME msgpack_hunt COMMAND msgpack_hunt_test)
+
 	# The value outlives the input buffer, the other values and the threads it came from.
 	find_package(Threads REQUIRED)
 	add_executable(msgpack_lifetime_test test/lifetime_test.cc)
 	target_link_libraries(msgpack_lifetime_test PRIVATE msgpack Threads::Threads)
 	add_test(NAME msgpack_lifetime COMMAND msgpack_lifetime_test)
 
-	# Allocation counts against the frozen implementation. It replaces global operator new, which
-	# the sanitizer runtimes also define, so it is not built under a sanitizer.
-	if(NOT "${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_${CMAKE_BUILD_TYPE}} ${CMAKE_EXE_LINKER_FLAGS}" MATCHES "sanitize")
+	# Allocation counts against the frozen implementation, and the hunt with allocations that fail. They
+	# replace global operator new, which the address, thread and memory sanitizer runtimes also define,
+	# so they are not built under those (UBSan alone is fine).
+	if(NOT "${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_${CMAKE_BUILD_TYPE}} ${CMAKE_EXE_LINKER_FLAGS}" MATCHES "sanitize=[a-z,]*(address|thread|memory)")
 		add_executable(msgpack_alloc_test test/alloc_test.cc)
 		target_link_libraries(msgpack_alloc_test PRIVATE msgpack)
 		target_include_directories(msgpack_alloc_test PRIVATE test)
 		add_test(NAME msgpack_alloc COMMAND msgpack_alloc_test)
+
+		add_executable(msgpack_hunt_alloc_test test/hunt_test.cc)
+		target_compile_definitions(msgpack_hunt_alloc_test PRIVATE HUNT_INJECT_ALLOC)
+		target_link_libraries(msgpack_hunt_alloc_test PRIVATE msgpack)
+		target_include_directories(msgpack_hunt_alloc_test PRIVATE test)
+		add_test(NAME msgpack_hunt_alloc COMMAND msgpack_hunt_alloc_test)
 	endif()
 
 	add_executable(msgpack_demo examples/demo.cc)
