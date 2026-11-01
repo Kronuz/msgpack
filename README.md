@@ -25,7 +25,19 @@ Patch. It is Xapiand's universal value type, extracted.
   type STR` and changes nothing, so the next call throws the same way.
 - 📦 **MessagePack on the wire**: `serialise()` and `MsgPack::unserialise()`.
 - 🔁 **JSON both ways** through RapidJSON, accepting comments, trailing commas, and
-  `NaN`/`Inf`.
+  `NaN`/`Inf`. A map key that is not a string has no JSON form, so `to_string()` and
+  `as_document()` write it as its own JSON text: `5` as `"5"`, `-1.5` as `"-1.5"`, `true` as
+  `"true"`, `null` and an ext as `"null"`, a float that is not finite as `"NaN"`, `"Infinity"` or
+  `"-Infinity"`, an array or a map as its text (`[1,"a"]`, `{"5":1}`, quoted). A `bin` key is
+  written as its bytes, as a `str` is. Two keys can give the same text (`5` and `"5"`), and then
+  the JSON repeats the key.
+- 🔀 **`update()` merges a map into a value**: each entry of the map is applied in order. An
+  undefined value erases the key, a key the value lacks is added, two maps merge, and anything
+  else replaces; a value that is not a map replaces the whole target. An update that throws for
+  a reason of its arguments (a map with a key that is not a string in the way of the merge, a
+  target that cannot be read by key, a constant or locked value) has changed nothing, whichever
+  entries came before the one that throws. An allocation that fails part way is the one
+  exception: the entries before it stay applied and the value stays consistent.
 - 🩹 **JSON Patch**: `add`, `remove`, `replace`, `move`, `copy`, `test`, plus `incr`
   and `decr`.
 

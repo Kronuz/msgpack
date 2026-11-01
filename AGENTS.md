@@ -25,11 +25,13 @@ test/merge_test.cc            ctest msgpack_merge: repeated keys (last value win
 test/growth_test.cc           ctest msgpack_growth: pushing onto and changing arrays of maps against the model; reads no freed memory under AddressSanitizer.
 test/failed_fill_test.cc      ctest msgpack_failed_fill: a map with a key that is not a string throws the same way on every fill and stays as it came; hand-written, exhaustive and random documents.
 test/replace_lock_test.cc     ctest msgpack_replace_lock: replace and put over a map or array that was already read, and lock() on a document with a bad map, against the model.
+test/json_keys_test.cc        ctest msgpack_json_keys: to_string() and as_document() of a map with a key that is not a string, against the JSON writer of test/model.h.
+test/update_test.cc           ctest msgpack_update: update() against a model of the merge: the outcome, and nothing changed when it throws.
 test/hunt_test.cc             ctest msgpack_hunt and msgpack_hunt_alloc: random sequences of every mutating operation against the model, with fills that throw and (hunt_alloc) failing allocations.
 test/frozen_msgpack.h         The earlier msgpack.h with MsgPack renamed MsgPackOld. The oracle: never edit it.
 test/lifetime_test.cc         ctest msgpack_lifetime: values outlive the input, the other values and threads.
 test/alloc_test.cc            ctest msgpack_alloc: allocation counts of unserialise, hash() and to_string() against the frozen copy.
-tools/mutants.py              Edits the implementation 40 ways (the previous unserialise, hash() and to_string() put back; the merge, growth, failed-fill, replace, lock, erase-count and failure-safety fixes undone and broken more ways); a test must fail on each.
+tools/mutants.py              Edits the implementation 51 ways (the previous unserialise, hash() and to_string() put back; the merge, growth, failed-fill, replace, lock, erase-count, failure-safety, JSON-key and update() fixes undone and broken more ways); a test must fail on each.
 benchmarks/pack_unpack.cc     msgpack_benchmark: MsgPack against the msgpack-c it bundles, on the corpus (read, walk, lookups, write, copy, update, JSON, hash).
 benchmarks/compare.cc         msgpack_compare: msgpack-c (current), nlohmann::json, mpack and RapidJSON on the same corpus and operations.
 benchmarks/corpus.h           The four documents (small, med, large, wide) as MessagePack bytes and JSON text, written without a msgpack library.
@@ -53,6 +55,8 @@ CMake fetches `atomic-shared-ptr`, `enum-reflection`, `strict-stox`, `located-ex
 - **`lock()` fills everything, then locks.** `_fill(true, false)` and then `_fill(true, true)`: a fill that throws deep in the document leaves nothing locked.
 - **`_update_array(pos, false)` keeps the index; only an erase resets it.** Growing an array must not drop the children's indexes: a `MsgPack&` held to `a.at(0)["k"]` points into them (`test_references_survive_growth`).
 - **Registering entries rolls back on `std::bad_alloc`.** `_init_map`, `_init_array`, `_put` and `_insert` leave the tree and the index agreeing when an allocation fails part way; `_reserve_map` and `_reserve_array` re-point the tree before they build the index. `erase` returns 1 for the last element too (`msgpack_hunt_alloc`).
+- **A map key that is not a string is written as its JSON text, in one place.** `msgpack_wrapper::accept_key` and `json_key` (in `xchange/rapidjson.hpp`, with `accept`) serve `to_string()` and the `as_document()` adaptor; neither reads `via.str` of a key without checking that it is a `str` (a `bin` is read through `via.bin`). The rule is in the README and is held by `msgpack_json_keys` against the JSON writer of `test/model.h`.
+- **`update()` checks, then applies.** `_update_check()` makes, in the same order, every call of `_update_apply()` that can throw for a reason other than memory, and changes nothing; `update()` runs the check and then the apply, so a throw leaves the value as it was. A change to one of the two needs the same change in the other (`msgpack_update` against a model of the merge). An allocation that fails in the apply leaves the entries before it applied; the README says so.
 - **Keep `MsgPack(MsgPack&&)` `noexcept`.** A `std::vector<MsgPack>` copies its elements when it reallocates otherwise, and each copy has a zone of its own that its children write into (`msgpack_growth` fails under AddressSanitizer).
 - **The exception fork is load-bearing.** `msgpack/exception.hpp` must keep inheriting `BaseException`. Xapiand relies on catching these types through its hierarchy.
 - **The seam is compile-time.** Standalone uses `msgpack_exception.h`; Xapiand defines `MSGPACK_EXCEPTION_HEADER` to its `src/exception.h`.

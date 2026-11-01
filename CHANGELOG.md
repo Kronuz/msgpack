@@ -31,6 +31,50 @@ releases, so entries are dated.
 
 ### Fixed
 
+- `to_string()` and `as_document()` write a map key that is not a string without undefined behavior.
+  Both read `via.str` of every key, so a key of another type gave whatever bytes the union held where
+  a `str` has its pointer: garbage text (`{5:1}` came out as `{"i&@\xef\xbf\xbdj":1}`) or a crash. A key
+  that is not a `str` is now written as its own compact JSON text, which is the rule JSON needs
+  (README, "JSON both ways"): `5` as `"5"`, `-1` as `"-1"`, `true` as `"true"`, `1.5` as `"1.5"`, `null` and
+  an ext as `"null"`, a float that is not finite as `"NaN"`, `"Infinity"` or `"-Infinity"`, an array or a map
+  as its text, quoted. A `bin` key is written as its bytes, as a `str` is, and is read through `via.bin`;
+  both functions used to read `via.str` of it. One function, `msgpack_wrapper::accept_key` (and `json_key`),
+  does it for both, in `xchange/rapidjson.hpp` next to `accept`, which moved there from `msgpack.h`.
+  The text of a document without such a key is unchanged. The oracle is a JSON writer of
+  `test/model.h` (`reference_json`, written from the rule, without RapidJSON or MsgPack):
+  `test/json_keys_test.cc` (`msgpack_json_keys`) checks `to_string()`, compact and indented, and
+  `as_document()` written back by a Writer and a PrettyWriter against it, that the text parses, and that
+  the document is not changed by writing it or by a read that throws, for 329 hand-written documents
+  (every key type, alone, among others, as an element, as a value) and 4000 random ones with keys of every
+  type, containers included, three levels deep (481 with a key that is not a string). The hunt checks the
+  same text on every document it makes with a bad map. On the earlier code both fail on the first
+  integer key. Five mutants, all killed (`key_read_as_str`, `convert_key_read_as_str`,
+  `key_nan_not_written`, `bin_key_as_json`, `ext_written_as_false`).
+- `update()` changes nothing when it throws for a reason of its arguments. It used to apply the
+  entries one by one, so a map with a key that is not a string in the way of the merge threw after the
+  entries before it were applied (and an undefined target that met one became an empty map). It now makes
+  a first pass (`_update_check`) that makes, in the same order, the calls of the second (`_update_apply`)
+  that can throw for a reason other than memory (a read of a map that has a key that is not a string, a
+  target that cannot be read by key, a constant or locked value) without changing the tree, and
+  changes it only if that pass finished. An allocation that fails in the second pass still leaves the
+  entries before it applied: the value stays consistent and usable (`msgpack_hunt_alloc`), but a
+  merge that is atomic for memory too needs a copy of the value to build the result aside, which costs
+  the whole value on every call and invalidates the references held into it. The README states both.
+  The first pass costs one lookup per entry: the new `merge` row of `msgpack_benchmark` (read, `update()`
+  with two entries, write), arm64 (Apple M1 Pro), three alternating runs of each tree, 1.17 to 1.18 us
+  before and 1.24 to 1.25 us after on the 63-byte document (+5%), 3.18 to 3.27 us and 3.28 to 3.30 us on the
+  502-byte one (+3%), and no difference beyond the noise (0.5%) on the 104 KB and 8.9 KB ones, where reading
+  and writing dominate. The checksums are the same. Not measured on x86-64.
+  `test/update_test.cc` (`msgpack_update`) holds it against a model of the merge: 23 targets (undefined,
+  nil, number, string, arrays, maps, nested maps, bad maps at every depth) by 1177 sources (every
+  one-entry and two-entry map over three keys and 15 values: erase, replace, merge, empty, nested, bad
+  map; and every non-map), each read first or not and passed as a const or not, and 3000 random documents
+  updated three times (36,071 cases: 21,148 merged, 5,129 threw on a bad key, 9,794 on a target that cannot be
+  read by key), comparing the outcome, the document after (unchanged when it throws), the source, and
+  that the result reads as the model says and takes another update. On the earlier code it fails
+  on the first bad map (the update of an undefined target by a bad map left it `{}`). Six mutants, all
+  killed (`update_no_check`, `update_check_after_apply`, `update_check_skips_nested`,
+  `update_check_skips_erase_read`, `update_check_skips_source`, `update_check_skips_const`).
 - `replace()` and `put()` over a key (or an index) whose old value was a map or an array
   that had been read keep the new value's index right. The new object replaced the old one
   but the value's `Body` kept the index and the capacity of the old value, so reading or
@@ -155,14 +199,17 @@ bounded bug hunt on `msgpack.h`: random sequences of every mutating operation (s
 a document of maps, arrays, scalars and bad maps, against the model in `test/model.h`, comparing
 `serialise()` after every step and reading the whole document back through the API every few. Properties
 checked on documents without a bad map: `hash()`, `to_string()`, `as_document()` and a parse of the text
-agree with a fresh read of the same bytes; `lock()` of a copy throws exactly when a bad map is in it.
+agree with a fresh read of the same bytes; on documents with one, `to_string()` (compact and indented) and
+`as_document()` give the text of the model's JSON writer, keys as the README says; `lock()` of a copy
+throws exactly when a bad map is in it. `update()` is modelled as atomic: a bad map in its way throws and
+changes nothing.
 Failures injected: bad maps (a fill that throws) and, in `msgpack_hunt_alloc`, one allocation made to fail
 (`std::bad_alloc`) around one operation in three, after which the model is read back from the bytes and
-the `MsgPack` must agree with them. Runs of the final tree: 300 runs in CTest; stress runs of 12,000 runs
-under AddressSanitizer and UBSan on arm64 macOS, 6,000 plain and 6,000 with failures (7,559 injected) under
-UBSan on x86-64 Linux, and the failing allocations under AddressSanitizer on both (1,870 and 399
-injected; LeakSanitizer on Linux), no report. It found the `erase()` count, the failure-safety above, and
-the reference problem. Mutants for it: `erase_last_returns_zero`, `init_map_keeps_partial`,
+the `MsgPack` must agree with them. Runs of the final tree: 300 runs in CTest; stress runs of 8,000 runs
+(903,439 steps) under AddressSanitizer and UBSan on arm64 macOS, 6,000 plain and 6,000 with failures (12,354
+injected) under UBSan on x86-64 Linux, and the failing allocations under AddressSanitizer on both (2,500 runs
+with 5,090 injected, and 1,500 runs with 3,121 injected and LeakSanitizer), no report. It found the `erase()`
+count, the failure-safety above, and the reference problem. Mutants for it: `erase_last_returns_zero`, `init_map_keeps_partial`,
 `put_map_keeps_entry`, `put_array_keeps_size`, `reserve_map_repoints_late`,
 `reserve_array_repoints_late` (run `hunt_alloc` mutants with `SAN=-fsanitize=undefined` or none).
 `MSGPACK_HUNT_SKIP=op,op` skips operations and `MSGPACK_HUNT_TRACE=1` prints every step.
@@ -171,10 +218,12 @@ the reference problem. Mutants for it: `erase_last_returns_zero`, `init_map_keep
 
 Each needs an owner decision.
 
-- `update()` is not atomic. It merges entry by entry, so when it meets a bad map it has to fill
-  (or an allocation fails) the entries before that point stay applied.
-- `to_string()` and `as_document()` read `via.str` of a map key that is not a string: undefined
-  behavior, as the earlier `as_document()` did (the hunt only prints documents without a bad map).
+- An allocation that fails part way through `update()` leaves the entries before it applied (the
+  value stays consistent and usable). Making it atomic for memory needs a copy of the value to build
+  the result aside, which costs the whole value on every call and invalidates references held into it.
+- A float that is not finite as a value (not as a key) stops the text of `to_string()` at that value,
+  as `as_document().Accept(writer)` always did, so the text is not JSON; the text before it is kept for
+  identity with the earlier output.
 - A `MsgPack&` to a child of a value that is replaced, erased or cleared is gone with the value, as
   with any container; a reference to an element itself is invalidated when an earlier element of its
   array is erased (the elements move up).
