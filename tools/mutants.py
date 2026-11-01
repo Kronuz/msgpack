@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Mutation and revert checks for unserialise, hash(), to_string(), the merge of repeated keys, the growth of
 arrays, the fill of a map that has a key that is not a string, replace() over a value that was read, lock(), the JSON
-text of a key that is not a string, and update().
+text of a key that is not a string and of a float that is not finite, and update().
 Each mutant edits one thing in msgpack.h and
 must make a named test fail (a nonzero exit, a crash or a timeout); a control with no edit must pass. A revert
 of unserialise, hash() or to_string() puts the previous implementation of one of the three back and must fail
@@ -103,6 +103,13 @@ xmutants = {
  'key_nan_not_written': ('json_keys', lambda s: s, rep('rapidjson::CrtAllocator, rapidjson::kWriteNanAndInfFlag>', 'rapidjson::CrtAllocator, rapidjson::kWriteDefaultFlags>')),
  'bin_key_as_json': ('json_keys', lambda s: s, rep('case msgpack::type::BIN:\n\t\t\t\treturn handler.Key(key.via.bin.ptr, key.via.bin.size);\n', '')),
  'ext_written_as_false': ('json_keys', lambda s: s, rep('case msgpack::type::NIL: // fall through\n\t\t\tdefault:\n\t\t\t\treturn handler.Null();', 'case msgpack::type::NIL: // fall through\n\t\t\tdefault:\n\t\t\t\treturn handler.Bool(false);')),
+ # a float that is not finite is null in the text (to_string()) and the name of the number as a key
+ 'nonfinite_value_stops': ('json_keys', lambda s: s, rep('if (!std::isfinite(o.via.f64)) {\n\t\t\t\t\treturn handler.Null();\n\t\t\t\t}\n', '')),
+ 'nonfinite_only_nan': ('json_keys', lambda s: s, rep('if (!std::isfinite(o.via.f64)) {\n\t\t\t\t\treturn handler.Null();', 'if (std::isnan(o.via.f64)) {\n\t\t\t\t\treturn handler.Null();')),
+ 'nonfinite_as_zero': ('json_keys', lambda s: s, rep('if (!std::isfinite(o.via.f64)) {\n\t\t\t\t\treturn handler.Null();', 'if (!std::isfinite(o.via.f64)) {\n\t\t\t\t\treturn handler.Uint(0);')),
+ 'nonfinite_key_null': ('json_keys', lambda s: s, rep('return std::isnan(key.via.f64) ? "NaN" : key.via.f64 > 0 ? "Infinity" : "-Infinity";', 'return "null";')),
+ 'nonfinite_key_sign_lost': ('json_keys', lambda s: s, rep('key.via.f64 > 0 ? "Infinity" : "-Infinity"', '"Infinity"')),
+ 'nonfinite_key_unchecked': ('json_keys', lambda s: s, rep('if (key.type == msgpack::type::FLOAT && !std::isfinite(key.via.f64)) {', 'if (false) {')),
 }
 mutants.update({k: v[:2] for k, v in xmutants.items()})
 only = sys.argv[4:]

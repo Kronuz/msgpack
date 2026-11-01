@@ -1,4 +1,4 @@
-// A map whose key is not a string in `to_string()` and `as_document()`.
+// A map whose key is not a string, and a float that is not finite, in `to_string()` and `as_document()`.
 //
 // JSON has string keys only. A str or bin key is written as it is, and any other key as its own
 // compact JSON text: 5 is "5", -1.5 is "-1.5", true is "true", null is "null", a float that is not
@@ -7,11 +7,16 @@
 // key. Reading `via.str` of a key that is not a str is undefined behavior, which the first versions of
 // both functions did.
 //
-// The oracle is the JSON text of test/model.h (`reference_json`), written from this rule without
-// RapidJSON and without MsgPack. Hand-written keys of every type, then random documents with keys of
-// every type at any depth; the text of `to_string()`, compact and indented, and of `as_document()`
-// written back with a Writer and a PrettyWriter must be the reference's, the document must not
-// change, and the text must parse.
+// JSON has no NaN or Infinity either: `to_string()` writes a float value that is not finite as null
+// (as JSON.stringify does), so its text is always JSON, and the text no longer stops at the value as it
+// did. In an array or a map used as a key the number is null too. `as_document()` keeps the number: a
+// RapidJSON Writer that writes NaN and Inf writes the names.
+//
+// The oracle is the JSON text of test/model.h (`reference_json`), written from these rules without
+// RapidJSON and without MsgPack. Hand-written keys and values of every type, then random documents with
+// keys of every type and non-finite floats at any depth; the text of `to_string()`, compact and
+// indented, and of `as_document()` written back with a Writer and a PrettyWriter must be the
+// reference's, the document must not change, and the text must parse.
 #include <cinttypes>
 #include <cstdint>
 #include <cstdio>
@@ -96,25 +101,31 @@ void check_document(const std::string& bytes, const std::string& context) {
 	CHECK_SAME("to_string(0) " + where, m.to_string(0), pretty0);
 	CHECK_SAME("the document after to_string() " + where, hex(m.serialise()), before);
 
-	// as_document(), written back as text
+	// as_document(), written back as text: it keeps the number, and a writer that writes NaN and Inf writes
+	// them as the names (to_string() writes null, which is JSON)
 	{
+		const std::string compact_literal = model::reference_json(bytes, -1, true);
+		const std::string pretty_literal = model::reference_json(bytes, 2, true);
 		rapidjson::Document doc = m.as_document();
 		rapidjson::StringBuffer buffer;
-		rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
+		rapidjson::Writer<rapidjson::StringBuffer, rapidjson::UTF8<>, rapidjson::UTF8<>, rapidjson::CrtAllocator, rapidjson::kWriteNanAndInfFlag> writer(buffer);
 		doc.Accept(writer);
-		CHECK_SAME("as_document() " + where, std::string(buffer.GetString(), buffer.GetSize()), compact);
+		CHECK_SAME("as_document() " + where, std::string(buffer.GetString(), buffer.GetSize()), compact_literal);
 		rapidjson::StringBuffer pbuffer;
-		rapidjson::PrettyWriter<rapidjson::StringBuffer> pwriter(pbuffer);
+		rapidjson::PrettyWriter<rapidjson::StringBuffer, rapidjson::UTF8<>, rapidjson::UTF8<>, rapidjson::CrtAllocator, rapidjson::kWriteNanAndInfFlag> pwriter(pbuffer);
 		pwriter.SetIndent(' ', 2);
 		doc.Accept(pwriter);
-		CHECK_SAME("as_document() indented " + where, std::string(pbuffer.GetString(), pbuffer.GetSize()), pretty);
+		CHECK_SAME("as_document() indented " + where, std::string(pbuffer.GetString(), pbuffer.GetSize()), pretty_literal);
 	}
 
-	// the text is JSON
+	// the text is JSON, read by the strictest parser (no comments, no NaN or Inf)
 	{
 		rapidjson::Document parsed;
-		parsed.Parse(compact.c_str(), compact.size());
+		parsed.Parse<rapidjson::kParseDefaultFlags>(compact.c_str(), compact.size());
 		if (parsed.HasParseError()) fail("the text parses " + where, compact, "valid JSON");
+		rapidjson::Document parsed_pretty;
+		parsed_pretty.Parse<rapidjson::kParseDefaultFlags>(pretty.c_str(), pretty.size());
+		if (parsed_pretty.HasParseError()) fail("the indented text parses " + where, pretty, "valid JSON");
 	}
 
 	// a copy, a read that fails, and a read of the same bytes give the same text
@@ -182,7 +193,7 @@ void test_hand_written() {
 		{"ext", std::string("\xd4\x05\x07", 3), "null"},
 		{"empty array", "\x90", "[]"},
 		{"array", std::string("\x92\x01\xa1" "a", 4), "[1,\"a\"]"},
-		{"array with a NaN", std::string("\x91") + raw_double(nan), "[NaN]"},
+		{"array with a NaN", std::string("\x91") + raw_double(nan), "[null]"},
 		{"empty map", "\x80", "{}"},
 		{"map", std::string("\x81\xa1" "a\x01", 4), "{\"a\":1}"},
 		{"map with a key that is not a string", std::string("\x81\x05\x01", 3), "{\"5\":1}"},
@@ -191,18 +202,14 @@ void test_hand_written() {
 		{"string with a quote", model::str_bytes("q\"uote\\"), "q\"uote\\"},
 	};
 	for (const auto& c : cases) {
-		const bool nonfinite = c.text == "NaN" || c.text == "Infinity" || c.text == "-Infinity" || c.text == "[NaN]";
 		for (const std::string& value : {model::uint_bytes(1), model::str_bytes("v"), std::string("\x92\x01\x02", 3)}) {
 			// the key alone, then among others (the strings before and after it)
 			check_document(one(c.key, value), "key " + c.name);
 			std::string many = model::map_head(3) + model::str_bytes("first") + value + c.key + value + model::str_bytes("last") + value;
 			check_document(many, "key " + c.name + " among others");
-			// the key as a value, in a map and in an array (a float that is not finite as a value stops
-			// the text, as it always did, and is only a key here)
-			if (!nonfinite) {
-				check_document(one(model::str_bytes("v"), c.key), "value " + c.name);
-				check_document(model::array_head(2) + one(c.key, value) + c.key, "in an array " + c.name);
-			}
+			// the key as a value, in a map and in an array
+			check_document(one(model::str_bytes("v"), c.key), "value " + c.name);
+			check_document(model::array_head(2) + one(c.key, value) + c.key, "in an array " + c.name);
 		}
 	}
 
@@ -214,6 +221,16 @@ void test_hand_written() {
 		{std::string("\x81\x81\xa1" "a\x01\x02", 6), "{\"{\\\"a\\\":1}\":2}"},
 		{std::string("\x81\x92\x01\xa1" "a\x02", 6), "{\"[1,\\\"a\\\"]\":2}"},
 		{std::string("\x81") + std::string("\x81") + std::string("\x05\x01", 2) + std::string("\x02", 1), "{\"{\\\"5\\\":1}\":2}"},
+		// a float that is not finite as a value is null (JSON has no NaN or Infinity)...
+		{std::string("\x81\xa1" "a", 3) + raw_double(nan), "{\"a\":null}"},
+		{model::array_head(5) + "\x01" + raw_double(nan) + raw_double(inf) + raw_double(-inf) + "\x02", "[1,null,null,null,2]"},
+		{model::array_head(2) + raw_float(std::numeric_limits<float>::quiet_NaN()) + raw_float(std::numeric_limits<float>::infinity()), "[null,null]"},
+		{std::string("\x81\xa1" "x\x81\xa1" "y", 6) + model::array_head(3) + raw_double(1.5) + raw_double(nan) + raw_double(-0.0), "{\"x\":{\"y\":[1.5,null,-0.0]}}"},
+		// ...and as a key it is the name of the number, or null inside an array or a map used as a key
+		{model::map_head(1) + raw_double(nan) + raw_double(inf), "{\"NaN\":null}"},
+		{model::map_head(2) + raw_double(-inf) + "\x01" + raw_double(inf) + "\x02", "{\"-Infinity\":1,\"Infinity\":2}"},
+		{model::map_head(1) + model::array_head(1) + raw_double(nan) + "\x01", "{\"[null]\":1}"},
+		{model::map_head(1) + model::map_head(1) + model::str_bytes("k") + raw_double(-inf) + "\x01", "{\"{\\\"k\\\":null}\":1}"},
 	};
 	for (const auto& e : exact) {
 		MsgPack m = MsgPack::unserialise(e.bytes);
@@ -236,9 +253,10 @@ void gen(Pk& pk, Rng& r, int depth, bool in_key) {
 		case 5: pk.pack_int8(static_cast<std::int8_t>(-1 - static_cast<int>(r.below(128)))); break;
 		case 6: pk.pack_int64(-1 - static_cast<std::int64_t>(r.next() >> 2)); break;
 		case 7: {
-			if (in_key && r.below(3) == 0) {
+			if (r.below(4) == 0) {
 				const double specials[] = {std::numeric_limits<double>::quiet_NaN(), std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity()};
-				pk.pack_double(specials[r.below(3)]);
+				if (r.below(2)) pk.pack_double(specials[r.below(3)]);
+				else pk.pack_float(static_cast<float>(specials[r.below(3)]));
 			} else if (r.below(2)) {
 				pk.pack_double(kDoubles[r.below(sizeof(kDoubles) / sizeof(*kDoubles))]);
 			} else {

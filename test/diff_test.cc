@@ -3,8 +3,9 @@
 //
 // Both types read the same random documents and run the same random sequence of operations;
 // every result and every exception must be equal: unserialise (value and offset), hash(),
-// serialise(), to_string() with and without indent (including the partial text of a document
-// that holds NaN or Inf), copies, moves, walks, mutations after unserialise and lock().
+// serialise(), to_string() with and without indent, copies, moves, walks, mutations after unserialise
+// and lock(). The text of a document that holds NaN or Inf is the one thing that differs by design:
+// the frozen implementation stops at the number, the current one writes null (see compare_logs).
 // Documents hold every msgpack type in every width, big integers, NaN and -0.0, empty
 // containers, ext, bin, and repeated keys at any depth.
 //
@@ -708,9 +709,20 @@ Stats stats;
 std::size_t failures = 0;
 
 
+std::size_t g_nonfinite_text = 0;   // JSON texts of documents with a NaN or Inf where the two differ as they should
+
+
 void compare_logs(const char* what, std::uint64_t seed, const Doc& doc, const std::vector<std::string>& a, const std::vector<std::string>& b) {
 	std::size_t n = std::min(a.size(), b.size());
 	for (std::size_t i = 0; i < n; ++i) {
+		// The one text that differs by design: the frozen implementation stops at a NaN or Inf (the
+		// Writer refuses it) and leaves the text before it, the current one writes null there and goes
+		// on. So the old text must be the beginning of the new one (the same calls, in the same order,
+		// up to the number), and equal to it when the number was erased before the text was written.
+		if (doc.non_finite && a[i] != b[i] && a[i].rfind("json", 0) == 0 && b[i].compare(0, a[i].size(), a[i]) == 0) {
+			++g_nonfinite_text;
+			continue;
+		}
 		if (a[i] != b[i]) {
 			std::fprintf(stderr, "%s: seed %" PRIu64 " step %zu differs\n  doc %s\n  old %s\n  new %s\n", what, seed, i,
 				hex(doc.bytes).c_str(), a[i].substr(0, 600).c_str(), b[i].substr(0, 600).c_str());
@@ -1002,9 +1014,10 @@ int main(int argc, char** argv) {
 		if (i % 4 == 0) check_prefixes(seed, doc);
 		if (failures > 5) break;
 	}
-	std::printf("documents %zu (read %zu, rejected %zu; %zu with repeated keys compared against the merged document, %zu with repeated and non-string keys not compared, %zu with NaN or Inf), operations %zu, failures %zu\n",
-		stats.docs, stats.parsed, stats.threw, stats.with_repeats, stats.not_compared, stats.non_finite, stats.steps, failures);
+	std::printf("documents %zu (read %zu, rejected %zu; %zu with repeated keys compared against the merged document, %zu with repeated and non-string keys not compared, %zu with NaN or Inf, %zu of their texts go on past the number), operations %zu, failures %zu\n",
+		stats.docs, stats.parsed, stats.threw, stats.with_repeats, stats.not_compared, stats.non_finite, g_nonfinite_text, stats.steps, failures);
 	CHECK(failures == 0);
+	CHECK(g_nonfinite_text > 0);
 	CHECK(stats.parsed > stats.docs / 2);
 	CHECK(stats.with_repeats > 20);
 	CHECK(stats.not_compared < stats.docs / 4);

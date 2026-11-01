@@ -24,6 +24,7 @@
 
 #pragma once
 
+#include <cmath>                 // for std::isfinite, std::isnan
 #include <string>                // for std::string
 
 #include "msgpack.hpp"           // for msgpack::object
@@ -36,14 +37,18 @@ namespace msgpack_wrapper {
 
 	// The text a map key is written as in JSON, which has string keys only: the compact JSON text of
 	// the key. A number, boolean or null key `5`, `-1.5`, `true`, `null` is written as that text, an
-	// array or map key as its own JSON text, a float that is not finite as `NaN`, `Infinity` or
-	// `-Infinity`, and an ext key (which JSON has no value for) as `null`. Two keys can give the same
-	// text (`5` and `"5"`), and then the JSON repeats the key. A str or bin key is written as it is
-	// and does not come here.
+	// array or map key as its own JSON text, a float key that is not finite as the name of the number,
+	// `NaN`, `Infinity` or `-Infinity`, and an ext key (which JSON has no value for) as `null`. A float
+	// that is not finite inside an array or map key is `null`, as it is in any value. Two keys can give
+	// the same text (`5` and `"5"`), and then the JSON repeats the key. A str or bin key is written as
+	// it is and does not come here.
 	inline std::string json_key(const msgpack::object& key);
 
 	// Makes the handler calls that `rapidjson::Document::Accept` makes for the document that
-	// `as_document()` builds from `o`, and stops at the first one that returns false.
+	// `as_document()` builds from `o`, and stops at the first one that returns false. JSON has no NaN
+	// or Infinity, and the Writer refuses them (it stops the text there unless it was told to write the
+	// names, which is not JSON), so a float that is not finite is made as a `Null()` call: the text of
+	// `to_string()` is always JSON and does not stop at the number. `as_document()` keeps the number.
 	template <typename Handler>
 	inline bool accept(const msgpack::object& o, Handler& handler);
 
@@ -72,6 +77,9 @@ namespace msgpack_wrapper {
 			case msgpack::type::NEGATIVE_INTEGER:
 				return handler.Int64(o.via.i64);
 			case msgpack::type::FLOAT:
+				if (!std::isfinite(o.via.f64)) {
+					return handler.Null();
+				}
 				return handler.Double(o.via.f64);
 			case msgpack::type::STR:
 				return handler.String(o.via.str.ptr, o.via.str.size);
@@ -111,8 +119,11 @@ namespace msgpack_wrapper {
 	}
 
 	inline std::string json_key(const msgpack::object& key) {
+		if (key.type == msgpack::type::FLOAT && !std::isfinite(key.via.f64)) {
+			return std::isnan(key.via.f64) ? "NaN" : key.via.f64 > 0 ? "Infinity" : "-Infinity";
+		}
 		rapidjson::StringBuffer buffer;
-		rapidjson::Writer<rapidjson::StringBuffer, rapidjson::UTF8<>, rapidjson::UTF8<>, rapidjson::CrtAllocator, rapidjson::kWriteNanAndInfFlag> writer(buffer);
+		rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
 		accept(key, writer);
 		return std::string(buffer.GetString(), buffer.GetSize());
 	}

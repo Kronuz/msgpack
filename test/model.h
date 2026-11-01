@@ -151,7 +151,10 @@ inline std::size_t hash_merged_maps(const msgpack::object& o) {
 // for `to_string()` and `as_document()`. The text is what RapidJSON's Writer (`indent` < 0) or
 // PrettyWriter (`indent` spaces) writes. JSON has string keys only: a str or bin key is written as
 // it is and any other key as its own compact JSON text (a float that is not finite as `NaN`,
-// `Infinity` or `-Infinity`, an ext as `null`); that is the rule the README states.
+// `Infinity` or `-Infinity` when it is the key itself, an ext as `null`); that is the rule the README
+// states. A float value that is not finite is written as `null`, which is what `to_string()` gives;
+// `as_document()` keeps the number, and a Writer with kWriteNanAndInfFlag writes it as `NaN`,
+// `Infinity` or `-Infinity` (`literal`).
 inline std::string json_string(const char* p, std::size_t n) {
 	static const char hexdigits[] = "0123456789ABCDEF";
 	std::string r = "\"";
@@ -194,17 +197,20 @@ inline std::string json_double(double d) {
 	std::abort();   // a double the tests do not know the text of
 }
 
-inline void json_write(const msgpack::object& o, int indent, int level, std::string& out);
+inline void json_write(const msgpack::object& o, int indent, int level, std::string& out, bool literal);
 
+// The text of a key. A float key that is not finite is the name of the number; inside an array or a map
+// used as a key the numbers are written as in any value, so they are `null`.
 inline std::string json_key_text(const msgpack::object& k) {
 	if (k.type == msgpack::type::STR) return std::string(k.via.str.ptr, k.via.str.size);
 	if (k.type == msgpack::type::BIN) return std::string(k.via.bin.ptr, k.via.bin.size);
+	if (k.type == msgpack::type::FLOAT && !std::isfinite(k.via.f64)) return json_double(k.via.f64);
 	std::string r;
-	json_write(k, -1, 0, r);
+	json_write(k, -1, 0, r, false);
 	return r;
 }
 
-inline void json_write(const msgpack::object& o, int indent, int level, std::string& out) {
+inline void json_write(const msgpack::object& o, int indent, int level, std::string& out, bool literal) {
 	auto newline = [&](int lv) {
 		if (indent >= 0) {
 			out += '\n';
@@ -215,7 +221,7 @@ inline void json_write(const msgpack::object& o, int indent, int level, std::str
 		case msgpack::type::BOOLEAN: out += o.via.boolean ? "true" : "false"; break;
 		case msgpack::type::POSITIVE_INTEGER: out += std::to_string(o.via.u64); break;
 		case msgpack::type::NEGATIVE_INTEGER: out += std::to_string(o.via.i64); break;
-		case msgpack::type::FLOAT: out += json_double(o.via.f64); break;
+		case msgpack::type::FLOAT: out += !literal && !std::isfinite(o.via.f64) ? std::string("null") : json_double(o.via.f64); break;
 		case msgpack::type::STR: out += json_string(o.via.str.ptr, o.via.str.size); break;
 		case msgpack::type::BIN: out += json_string(o.via.bin.ptr, o.via.bin.size); break;
 		case msgpack::type::ARRAY:
@@ -223,7 +229,7 @@ inline void json_write(const msgpack::object& o, int indent, int level, std::str
 			for (std::uint32_t i = 0; i < o.via.array.size; ++i) {
 				if (i) out += ',';
 				newline(level + 1);
-				json_write(o.via.array.ptr[i], indent, level + 1, out);
+				json_write(o.via.array.ptr[i], indent, level + 1, out, literal);
 			}
 			if (o.via.array.size) newline(level);
 			out += ']';
@@ -236,7 +242,7 @@ inline void json_write(const msgpack::object& o, int indent, int level, std::str
 				const std::string key = json_key_text(o.via.map.ptr[i].key);
 				out += json_string(key.data(), key.size());
 				out += indent >= 0 ? ": " : ":";
-				json_write(o.via.map.ptr[i].val, indent, level + 1, out);
+				json_write(o.via.map.ptr[i].val, indent, level + 1, out, literal);
 			}
 			if (o.via.map.size) newline(level);
 			out += '}';
@@ -245,10 +251,10 @@ inline void json_write(const msgpack::object& o, int indent, int level, std::str
 	}
 }
 
-inline std::string reference_json(std::string_view bytes, int indent = -1) {
+inline std::string reference_json(std::string_view bytes, int indent = -1, bool literal = false) {
 	msgpack::object_handle h = msgpack::unpack(bytes.data(), bytes.size());
 	std::string out;
-	json_write(h.get(), indent, 0, out);
+	json_write(h.get(), indent, 0, out, literal);
 	return out;
 }
 
