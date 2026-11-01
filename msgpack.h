@@ -654,6 +654,23 @@ struct MsgPack::Body {
 		  _obj(_base.get()),
 		  _capacity(size()) { }
 
+	// Reads one object from `data` straight into this body's zone: the unpacked tree is the
+	// body's tree, with no second copy.
+	struct unpack_tag {};
+	Body(unpack_tag, const char* data, std::size_t len, std::size_t& off)
+		: _flags(0),
+		  _lock(false),
+		  _initialized(false),
+		  _const(false),
+		  _zone(std::make_shared<msgpack::zone>()),
+		  _base(std::make_shared<msgpack::object>(msgpack::unpack(*_zone, data, len, off))),
+		  _parent(std::shared_ptr<Body>()),
+		  _is_key(false),
+		  _pos(-1),
+		  _key(std::shared_ptr<Body>()),
+		  _obj(_base.get()),
+		  _capacity(size()) { }
+
 	MsgPack& at(size_t pos) {
 		return array.at(pos);
 	}
@@ -3167,7 +3184,7 @@ inline std::string MsgPack::serialise() const {
 
 
 inline MsgPack MsgPack::unserialise(const char* data, std::size_t len, std::size_t& off) {
-	return MsgPack(msgpack::unpack(data, len, off).get());
+	return MsgPack(std::make_shared<Body>(Body::unpack_tag{}, data, len, off));
 }
 
 

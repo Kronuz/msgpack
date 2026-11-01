@@ -70,6 +70,12 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 	target_include_directories(msgpack_diff_test PRIVATE test)
 	add_test(NAME msgpack_diff COMMAND msgpack_diff_test)
 
+	# The value outlives the input buffer, the other values and the threads it came from.
+	find_package(Threads REQUIRED)
+	add_executable(msgpack_lifetime_test test/lifetime_test.cc)
+	target_link_libraries(msgpack_lifetime_test PRIVATE msgpack Threads::Threads)
+	add_test(NAME msgpack_lifetime COMMAND msgpack_lifetime_test)
+
 	add_executable(msgpack_demo examples/demo.cc)
 	target_link_libraries(msgpack_demo PRIVATE msgpack)
 
