@@ -84,6 +84,13 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 	target_include_directories(msgpack_growth_test PRIVATE test)
 	add_test(NAME msgpack_growth COMMAND msgpack_growth_test)
 
+	# A fill that throws (a map with a key that is not a string) leaves the map as it was, and the
+	# next fill throws the same way.
+	add_executable(msgpack_failed_fill_test test/failed_fill_test.cc)
+	target_link_libraries(msgpack_failed_fill_test PRIVATE msgpack)
+	target_include_directories(msgpack_failed_fill_test PRIVATE test)
+	add_test(NAME msgpack_failed_fill COMMAND msgpack_failed_fill_test)
+
 	# The value outlives the input buffer, the other values and the threads it came from.
 	find_package(Threads REQUIRED)
 	add_executable(msgpack_lifetime_test test/lifetime_test.cc)

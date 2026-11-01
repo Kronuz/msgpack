@@ -972,12 +972,18 @@ inline MsgPack* MsgPack::_init_map(size_t pos) {
 		THROW(msgpack::const_error, "Locked object");
 	}
 	MsgPack* ret = nullptr;
+	// A key that is not a string cannot be indexed. It is found before anything changes, so that
+	// a fill that throws leaves the map as it was: with the keys already indexed, the next fill
+	// would take them for repeats and drop them from the tree.
+	for (auto k = &_body->_obj->via.map.ptr[pos], kend = &_body->_obj->via.map.ptr[_body->_obj->via.map.size]; k < kend; ++k) {
+		if (k->key.type != msgpack::type::STR) {
+			THROW(msgpack::type_error, "MAP keys must be of type STR");
+		}
+	}
 	_body->map.reserve(_body->_capacity);
 	auto pend = &_body->_obj->via.map.ptr[_body->_obj->via.map.size];
 	for (auto p = &_body->_obj->via.map.ptr[pos]; p < pend; ++p) {
-		if (p->key.type != msgpack::type::STR) {
-			THROW(msgpack::type_error, "MAP keys must be of type STR");
-		}
+		assert(p->key.type == msgpack::type::STR);
 		std::string_view str_key(p->key.via.str.ptr, p->key.via.str.size);
 		auto pit = _body->map.find(str_key);
 		if (pit == _body->map.end()) {

@@ -57,52 +57,10 @@ struct Rng {
 
 // ---- documents as bytes, with repeats allowed
 
-std::string str_bytes(const std::string& s) {
-	std::string r;
-	if (s.size() < 32) {
-		r.push_back(static_cast<char>(0xa0 | s.size()));
-	} else {
-		r.push_back(static_cast<char>(0xd9));
-		r.push_back(static_cast<char>(s.size()));
-	}
-	return r + s;
-}
-
-std::string uint_bytes(std::uint64_t v) {
-	std::string r;
-	if (v < 128) {
-		r.push_back(static_cast<char>(v));
-	} else {
-		r.push_back(static_cast<char>(0xcd));
-		r.push_back(static_cast<char>(v >> 8));
-		r.push_back(static_cast<char>(v));
-	}
-	return r;
-}
-
-std::string map_head(std::size_t n) {
-	std::string r;
-	if (n < 16) {
-		r.push_back(static_cast<char>(0x80 | n));
-	} else {
-		r.push_back(static_cast<char>(0xde));
-		r.push_back(static_cast<char>(n >> 8));
-		r.push_back(static_cast<char>(n));
-	}
-	return r;
-}
-
-std::string array_head(std::size_t n) {
-	std::string r;
-	if (n < 16) {
-		r.push_back(static_cast<char>(0x90 | n));
-	} else {
-		r.push_back(static_cast<char>(0xdc));
-		r.push_back(static_cast<char>(n >> 8));
-		r.push_back(static_cast<char>(n));
-	}
-	return r;
-}
+using model::array_head;
+using model::map_head;
+using model::str_bytes;
+using model::uint_bytes;
 
 // {k0: v0, k1: v1, ...} where each pair is (key, bytes of the value)
 std::string map_of(const std::vector<std::pair<std::string, std::string>>& entries) {
