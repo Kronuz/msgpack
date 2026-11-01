@@ -988,13 +988,20 @@ inline MsgPack* MsgPack::_init_map(size_t pos) {
 				std::forward_as_tuple(std::move(str_key)),
 				std::forward_as_tuple(std::move(last_key), std::move(last_val))).first;
 		} else {
-			*pit->second.first._body->_obj = p->key;
-			*pit->second.second._body->_obj = p->val;
+			// A repeated key: the last value wins, in the position of the first. The entry
+			// moves into the value of the first one, and the entries after it move up by one.
+			auto& value_body = *pit->second.second._body;
+			value_body._initialized = false;
+			value_body.map.clear();
+			value_body.array.clear();
+			*value_body._obj = p->val;
+			value_body._capacity = value_body.size();
 			--pend;
 			--_body->_obj->via.map.size;
 			for (auto q = p; q < pend; ++q) {
-				*q = *(p + 1);
+				*q = *(q + 1);
 			}
+			--p;  // the entry that moved into this position is next
 		}
 		ret = &pit->second.second;
 	}

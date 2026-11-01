@@ -6,11 +6,21 @@
 // serialise(), to_string() with and without indent (including the partial text of a document
 // that holds NaN or Inf), copies, moves, walks, mutations after unserialise and lock().
 // Documents hold every msgpack type in every width, big integers, NaN and -0.0, empty
-// containers, ext, bin, and repeated keys at any depth. A repeated key is the interesting
-// case: hash() fills the map, and filling merges repeated keys in the underlying tree, so the
-// result of hash() and what serialise() and a copy give afterwards depend on it.
+// containers, ext, bin, and repeated keys at any depth.
 //
-// The frozen implementation asserts on that merge in a build with assertions, so this
+// The one class where the two types are meant to differ is a document that repeats a string key
+// in some map. The frozen implementation merges the repeats wrongly (it copies the wrong
+// entry over the ones after it, leaves the tree and the index of the map out of step, and can
+// read freed memory), and the current one keeps the last value in the position of the first
+// (test/model.h, test/merge_test.cc). For those documents the frozen implementation reads the
+// merged document instead (what a correct merge gives, built by model::merged), the current
+// one reads the original and is filled before the operations start (what first fills a map
+// decides what is merged); everything else, offsets included, is compared as it is.
+// A document that repeats a string key and also has a key that is not a string is not
+// compared: filling throws at the non-string key after merging what came before it, and the
+// frozen merge is not defined there.
+//
+// The frozen implementation asserts on its merge in a build with assertions, so this
 // translation unit turns them off.
 #ifndef NDEBUG
 #define NDEBUG
@@ -32,6 +42,7 @@
 
 #include "msgpack.h"
 #include "frozen_msgpack.h"
+#include "model.h"
 
 #define CHECK(cond) \
 	do { \
@@ -457,37 +468,108 @@ void mutate(M& m, int arg) {
 }
 
 
-// Whether some map holds a repeated key or a key that is not a string.
-bool has_repeated_keys(const msgpack::object& o) {
-	if (o.type == msgpack::type::MAP) {
-		for (std::uint32_t i = 0; i < o.via.map.size; ++i) {
-			const auto& a = o.via.map.ptr[i].key;
-			if (a.type != msgpack::type::STR) return true;
-			for (std::uint32_t j = 0; j < i; ++j) {
-				const auto& b = o.via.map.ptr[j].key;
-				if (a.via.str.size == b.via.str.size && std::memcmp(a.via.str.ptr, b.via.str.ptr, a.via.str.size) == 0) return true;
-			}
-			if (has_repeated_keys(o.via.map.ptr[i].val)) return true;
+// What the maps of a document do with their keys.
+struct KeyShape {
+	bool repeats = false;        // some map holds a string key twice
+	bool non_string = false;     // some map has a key that is not a string
+	bool array_of_maps = false;  // the document is an array with a map somewhere inside
+};
+
+bool contains_map(const msgpack::object& o) {
+	if (o.type == msgpack::type::MAP) return true;
+	if (o.type == msgpack::type::ARRAY) {
+		for (std::uint32_t i = 0; i < o.via.array.size; ++i) {
+			if (contains_map(o.via.array.ptr[i])) return true;
 		}
 	}
 	return false;
 }
 
-
-
-bool document_has_repeated_keys(const Doc& doc) {
-	try {
-		std::size_t off = 0;
-		msgpack::object_handle h = msgpack::unpack(doc.bytes.data(), doc.bytes.size(), off);
-		return has_repeated_keys(h.get());
-	} catch (const std::exception&) {
-		return false;
+void key_shape(const msgpack::object& o, KeyShape& shape) {
+	if (o.type == msgpack::type::MAP) {
+		for (std::uint32_t i = 0; i < o.via.map.size; ++i) {
+			const auto& a = o.via.map.ptr[i].key;
+			if (a.type != msgpack::type::STR) {
+				shape.non_string = true;
+			} else {
+				for (std::uint32_t j = 0; j < i; ++j) {
+					const auto& b = o.via.map.ptr[j].key;
+					if (b.type == msgpack::type::STR && a.via.str.size == b.via.str.size &&
+						std::memcmp(a.via.str.ptr, b.via.str.ptr, a.via.str.size) == 0) {
+						shape.repeats = true;
+					}
+				}
+			}
+			key_shape(o.via.map.ptr[i].val, shape);
+		}
+	} else if (o.type == msgpack::type::ARRAY) {
+		for (std::uint32_t i = 0; i < o.via.array.size; ++i) {
+			key_shape(o.via.array.ptr[i], shape);
+		}
 	}
 }
 
 
+// The shape of the document at the start of `bytes`; a document that does not parse has none.
+KeyShape document_key_shape(const std::string& bytes) {
+	KeyShape shape;
+	try {
+		std::size_t off = 0;
+		msgpack::object_handle h = msgpack::unpack(bytes.data(), bytes.size(), off);
+		key_shape(h.get(), shape);
+		shape.array_of_maps = h.get().type == msgpack::type::ARRAY && contains_map(h.get());
+	} catch (const std::exception&) {
+		shape = KeyShape();
+	}
+	return shape;
+}
+
+
+// The document at the start of `bytes` with every map merged as test/model.h says (no byte after
+// it): what the frozen implementation reads in place of a document that repeats a key.
+std::string merged_document(const std::string& bytes) {
+	std::size_t off = 0;
+	msgpack::object_handle h = msgpack::unpack(bytes.data(), bytes.size(), off);
+	msgpack::sbuffer buf;
+	msgpack::packer<msgpack::sbuffer> pk(&buf);
+	model::pack_merged(pk, h.get());
+	return std::string(buf.data(), buf.size());
+}
+
+
+// Touches every node through the API, which fills (and merges) every map and array.
 template <typename M>
-std::vector<std::string> run(const Doc& doc, const std::vector<Step>& steps, bool lock_at_end, bool repeats) {
+void fill_all(M& m) {
+	if (m.is_map()) {
+		for (auto it = m.begin(); it != m.end(); ++it) {
+			fill_all(it.value());
+		}
+	} else if (m.is_array()) {
+		for (std::size_t i = 0; i < m.size(); ++i) {
+			fill_all(m.at(i));
+		}
+	}
+}
+
+
+// What `run` does with a document.
+struct Mode {
+	bool merged_input = false;   // the document repeats keys and the current implementation reads it as it is:
+	                             // the offset is not logged (the frozen side reads the merged bytes, which are
+	                             // shorter) and every map is filled first, so the merge has been done before the
+	                             // first operation, as in the frozen side's input
+	bool mutate = true;          // run the steps that change the value (mutate, erase)
+	bool copy_mutate = true;     // run the step that changes a copy
+	bool stop_at_throw = false;  // end the sequence at the first step that throws: filling a map that has a key
+	                             // that is not a string throws, and the next fill of that map gives something else
+	                             // in each implementation (see "Known problems" in CHANGELOG)
+};
+
+
+// Runs `steps` on the document in `bytes`.
+template <typename M>
+std::vector<std::string> run(const std::string& bytes, const Doc& doc, const std::vector<Step>& steps, bool lock_at_end, const Mode& mode) {
+	const bool merged_input = mode.merged_input;
 	std::vector<std::string> log;
 	auto step = [&](const char* name, auto&& f) {
 		try {
@@ -500,13 +582,14 @@ std::vector<std::string> run(const Doc& doc, const std::vector<Step>& steps, boo
 	std::size_t off = 0;
 	std::unique_ptr<M> root;   // the value as unserialise returns it, not assigned into another
 	try {
-		root.reset(new M(M::unserialise(doc.bytes.data(), doc.bytes.size(), off)));
-		log.push_back("unserialise off " + std::to_string(off));
+		root.reset(new M(M::unserialise(bytes.data(), bytes.size(), off)));
+		log.push_back(merged_input ? std::string("unserialise") : "unserialise off " + std::to_string(off));
 	} catch (...) {
-		log.push_back("unserialise threw " + current_exception_text() + " off " + std::to_string(off));
+		log.push_back("unserialise threw " + current_exception_text() + (merged_input ? std::string() : " off " + std::to_string(off)));
 		return log;
 	}
 	M& cur = *root;
+	if (merged_input) fill_all(cur);
 
 	for (const Step& s : steps) {
 		switch (s.op) {
@@ -531,7 +614,7 @@ std::vector<std::string> run(const Doc& doc, const std::vector<Step>& steps, boo
 				});
 				break;
 			case COPY_MUTATE:
-				if (!repeats) step("copy mutate", [&] {
+				if (mode.copy_mutate) step("copy mutate", [&] {
 					M c(cur);
 					mutate(c, s.arg);
 					return hex(c.serialise()) + " | " + hex(cur.serialise());
@@ -541,10 +624,10 @@ std::vector<std::string> run(const Doc& doc, const std::vector<Step>& steps, boo
 				step("walk", [&] { std::string r; walk(cur, r, 0); return r; });
 				break;
 			case MUTATE:
-				if (!repeats) step("mutate", [&] { mutate(cur, s.arg); return hex(cur.serialise()); });
+				if (mode.mutate) step("mutate", [&] { mutate(cur, s.arg); return hex(cur.serialise()); });
 				break;
 			case ERASE:
-				if (!repeats) step("erase", [&] {
+				if (mode.mutate) step("erase", [&] {
 					if (cur.is_map()) {
 						return std::to_string(cur.erase(std::string_view("a"))) + " " + hex(cur.serialise());
 					}
@@ -580,6 +663,7 @@ std::vector<std::string> run(const Doc& doc, const std::vector<Step>& steps, boo
 			default:
 				break;
 		}
+		if (mode.stop_at_throw && log.back().find(" threw ") != std::string::npos) return log;
 	}
 	if (lock_at_end) {
 		step("lock", [&] { cur.lock(); return std::to_string(cur.locked()); });
@@ -610,7 +694,7 @@ std::size_t oracle_hash(const msgpack::object& o) {
 
 
 struct Stats {
-	std::size_t docs = 0, parsed = 0, threw = 0, with_repeats = 0, non_finite = 0, steps = 0;
+	std::size_t docs = 0, parsed = 0, threw = 0, with_repeats = 0, not_compared = 0, non_finite = 0, steps = 0;
 };
 
 Stats stats;
@@ -636,10 +720,10 @@ void compare_logs(const char* what, std::uint64_t seed, const Doc& doc, const st
 
 void check_document(std::uint64_t seed, const Doc& doc, Rng& r) {
 	++stats.docs;
-	// Mutating a map after the repeats in it were merged (by hash() or a walk) dereferences the end
-	// iterator in the frozen code (MsgPackOld::_update_map), and the current code does the same, so
-	// those operations run only on documents that repeat no key.
-	const bool repeats = document_has_repeated_keys(doc);
+	if (std::getenv("MSGPACK_DIFF_TRACE")) {   // names the document a crash happened in
+		std::fprintf(stderr, "document seed %" PRIu64 " %s\n", seed, hex(doc.bytes.substr(0, 300)).c_str());
+	}
+	const KeyShape shape = document_key_shape(doc.bytes);
 	std::vector<Step> steps;
 	std::size_t n_steps = 2 + r.below(10);
 	for (std::size_t i = 0; i < n_steps; ++i) {
@@ -650,34 +734,60 @@ void check_document(std::uint64_t seed, const Doc& doc, Rng& r) {
 	static const Op orders[][3] = {
 		{ HASH, SERIALISE, COPY }, { SERIALISE, HASH, JSON }, { WALK, HASH, SERIALISE }, { JSON, COPY, HASH },
 	};
+	const bool lock_at_end = r.chance(1, 8);
+	if (shape.repeats && shape.non_string) {
+		// Not compared (see the top of the file), but the current implementation still reads it, so
+		// a sanitizer sees what it does with a map that throws half way through its merge.
+		++stats.not_compared;
+		Mode reads_only;
+		reads_only.mutate = reads_only.copy_mutate = false;
+		for (const auto& order : orders) {
+			std::vector<Step> fixed;
+			for (Op op : order) fixed.push_back(Step{ op, 0 });
+			run<MsgPack>(doc.bytes, doc, fixed, false, reads_only);
+		}
+		run<MsgPack>(doc.bytes, doc, steps, lock_at_end, reads_only);
+		return;
+	}
+	// A document that repeats a string key is read by the frozen implementation as the merged
+	// document, by the current one as it is.
+	const bool merge = shape.repeats;
+	const std::string old_bytes = merge ? merged_document(doc.bytes) : doc.bytes;
+	// A step that changes the value is left out where the frozen implementation is wrong by itself:
+	// an array with a map in it, grown after the maps were filled, gave elements that point into
+	// freed memory (test/growth_test.cc covers that against the model). A sequence on a document
+	// with a key that is not a string ends at its first exception (see Mode::stop_at_throw).
+	Mode mode;
+	mode.merged_input = merge;
+	mode.mutate = !shape.array_of_maps;
+	mode.stop_at_throw = shape.non_string;
 	for (const auto& order : orders) {
 		std::vector<Step> fixed;
 		for (Op op : order) fixed.push_back(Step{ op, 0 });
-		auto a = run<MsgPackOld>(doc, fixed, false, repeats);
-		auto b = run<MsgPack>(doc, fixed, false, repeats);
+		auto a = run<MsgPackOld>(old_bytes, doc, fixed, false, mode);
+		auto b = run<MsgPack>(doc.bytes, doc, fixed, false, mode);
 		compare_logs("fixed order", seed, doc, a, b);
 	}
-	bool lock_at_end = r.chance(1, 8);
-	auto a = run<MsgPackOld>(doc, steps, lock_at_end, repeats);
-	auto b = run<MsgPack>(doc, steps, lock_at_end, repeats);
+	auto a = run<MsgPackOld>(old_bytes, doc, steps, lock_at_end, mode);
+	auto b = run<MsgPack>(doc.bytes, doc, steps, lock_at_end, mode);
 	stats.steps += steps.size();
 	compare_logs("random ops", seed, doc, a, b);
 	if (a[0].find("threw") != std::string::npos) ++stats.threw; else ++stats.parsed;
 	if (doc.non_finite) ++stats.non_finite;
 
-	// hash() against the definition, for a document that repeats no key
+	// hash() against the definition: the first thing done to a document that repeats no key, and
+	// to one that does, whose maps are merged by it (those reached through maps; an array is
+	// packed as it is).
 	std::size_t off = 0;
 	try {
 		msgpack::object_handle h = msgpack::unpack(doc.bytes.data(), doc.bytes.size(), off);
-		if (has_repeated_keys(h.get())) {
-			++stats.with_repeats;
-		} else {
-			MsgPack m = MsgPack::unserialise(doc.bytes);
-			std::size_t expected = oracle_hash(h.get());
-			if (m.hash() != expected) {
-				std::fprintf(stderr, "hash oracle: seed %" PRIu64 " doc %s: got %zu, expected %zu\n", seed, hex(doc.bytes).c_str(), m.hash(), expected);
-				++failures;
-			}
+		if (shape.non_string) return;
+		if (merge) ++stats.with_repeats;
+		MsgPack m = MsgPack::unserialise(doc.bytes);
+		std::size_t expected = merge ? model::hash_merged_maps(h.get()) : oracle_hash(h.get());
+		if (m.hash() != expected) {
+			std::fprintf(stderr, "hash oracle: seed %" PRIu64 " doc %s: got %zu, expected %zu\n", seed, hex(doc.bytes).c_str(), m.hash(), expected);
+			++failures;
 		}
 	} catch (const std::exception&) {
 	}
@@ -885,11 +995,12 @@ int main(int argc, char** argv) {
 		if (i % 4 == 0) check_prefixes(seed, doc);
 		if (failures > 5) break;
 	}
-	std::printf("documents %zu (read %zu, rejected %zu; %zu with repeated keys, %zu with NaN or Inf), operations %zu, failures %zu\n",
-		stats.docs, stats.parsed, stats.threw, stats.with_repeats, stats.non_finite, stats.steps, failures);
+	std::printf("documents %zu (read %zu, rejected %zu; %zu with repeated keys compared against the merged document, %zu with repeated and non-string keys not compared, %zu with NaN or Inf), operations %zu, failures %zu\n",
+		stats.docs, stats.parsed, stats.threw, stats.with_repeats, stats.not_compared, stats.non_finite, stats.steps, failures);
 	CHECK(failures == 0);
 	CHECK(stats.parsed > stats.docs / 2);
 	CHECK(stats.with_repeats > 20);
+	CHECK(stats.not_compared < stats.docs / 4);
 	std::printf("msgpack differential OK\n");
 	return 0;
 }
