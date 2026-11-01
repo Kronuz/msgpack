@@ -6,7 +6,7 @@
 msgpack-c v1.3.0 headers
         |
         v
-MsgPack COW value type
+MsgPack value type
         |
         +--> xchange adaptors (RapidJSON, string_view)
         |
@@ -22,7 +22,17 @@ That choice is deliberate. Xapiand catches these exceptions through its own hier
 
 ## Layer 2: `MsgPack`
 
-`msgpack.h` wraps `msgpack::object` with a copy-on-write value API. Maps and arrays are lazily materialized into C++ containers when accessed, then written back into the underlying msgpack object storage. The original growth factors, reserve paths, undefined extension type, selector syntax, conversions, and serialise/unserialise format are preserved.
+`msgpack.h` wraps `msgpack::object` with a JSON-like value API. Maps and arrays are lazily materialized into C++ containers when accessed, then written back into the underlying msgpack object storage. The original growth factors, reserve paths, undefined extension type, selector syntax, conversions, and serialise/unserialise format are preserved.
+
+A value owns a `Body`: a `msgpack::zone` (the arena that holds the tree), the root `msgpack::object`, and the lazily built index of its maps and arrays. Every child of a map or array shares its parent's zone and root through `shared_ptr`, so a part taken out of a value keeps the whole tree alive.
+
+**Copies are deep.** `MsgPack(const MsgPack&)` and `operator=(const MsgPack&)` allocate a new zone and copy every node into it (`object_with_zone`). The copy and its source share nothing. A copy costs time and memory in proportion to the size of the value; a move transfers the `shared_ptr<Body>` and costs one pointer swap.
+
+**The tree is the source of truth.** The index of `Body` objects is built on first touch of a map or array and always points into the tree, so an operation that only reads the data can read the tree directly:
+
+- `unserialise` reads into the new body's own zone (`Body(unpack_tag, ...)`). The unpacked tree is the value's tree, with no second copy. Strings and binaries are copied into the zone, so a value never points into the input buffer.
+- `hash()` computes the XOR over the entries of a map, `hash(key) ^ hash(value)`, with values that are maps hashed the same way and every other value hashed as its packed bytes (a 256-byte stack buffer, the heap past that). It does this on the tree, with no `Body` per node, when the maps it reaches through maps have only string keys and no repeated key. Otherwise it fills the map first, as it always did: filling throws for a key that is not a string and merges repeated keys in the tree, so the hash, and what `serialise()` and a copy give afterwards, depend on it.
+- `to_string()` makes the calls on a RapidJSON `Writer` (or `PrettyWriter`) that `rapidjson::Document::Accept` would make for the document `as_document()` builds, in the same order and stopping at the first `false`, so a `NaN` or `Inf` leaves the same partial text.
 
 The public type remains in the global namespace and the header name stays `msgpack.h` so existing consumers only need this repo on the include path.
 
@@ -43,7 +53,8 @@ The vendored `msgpack/exception.hpp` still includes `exception.h` directly. In s
 ## Invariants
 
 - **Wire format is byte-identical.** Do not change the `UNDEFINED` extension type, msgpack-c pack/unpack behavior, or the serialised bytes emitted by `MsgPack::serialise()`.
-- **COW semantics are preserved.** Copy, lazy fill, reserve, map key storage, and parent/key update behavior are lifted from Xapiand.
+- **Copy semantics are preserved.** A copy is deep. Lazy fill, reserve, map key storage, and parent/key update behavior are lifted from Xapiand.
+- **`unserialise`, `hash()` and `to_string()` give what the earlier implementation gave**, for every input: the same values, offsets, exceptions, and the same changes to the tree. `test/diff_test.cc` checks them against the frozen `test/frozen_msgpack.h`.
 - **The msgpack-c fork stays forked.** Its exceptions inherit `BaseException` by design.
 - **RapidJSON stays lenient.** The parse flags for comments, trailing commas, and NaN/Inf are part of Xapiand behavior.
 - **Names and layout stay stable.** Consumers include the same file names they did inside Xapiand.
@@ -51,7 +62,7 @@ The vendored `msgpack/exception.hpp` still includes `exception.h` directly. In s
 ## What's included
 
 - **`msgpack/` + `msgpack.hpp`**: upstream `msgpack-c` v1.3.0 headers, with Xapiand's forked `msgpack/exception.hpp` preserved. The fork makes msgpack exceptions inherit `BaseException`.
-- **`msgpack.h`**: Xapiand's `MsgPack` value type, with JSON-like map/array access, serialise/unserialise helpers, typed accessors, selectors, and copy-on-write storage.
+- **`msgpack.h`**: Xapiand's `MsgPack` value type, with JSON-like map/array access, serialise/unserialise helpers, typed accessors, selectors, and deep-copy storage.
 - **`xchange/rapidjson.hpp` and `xchange/string_view.hpp`**: msgpack adaptors for RapidJSON and `std::string_view`.
 - **`msgpack_patcher.{h,cc}`**: RFC 6902 JSON-Patch operations (`add`, `remove`, `replace`, `move`, `copy`, `test`, plus Xapiand's `incr`/`decr`).
 

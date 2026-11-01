@@ -7,14 +7,16 @@ Part of [Kronuz C++ Libraries](https://github.com/Kronuz/cpp-libraries), a colle
 ![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)
 
 A JSON-like value for C++20 that serializes to MessagePack: build it with
-initializer lists, index it like a map or array, copy it cheaply, and patch it with
-RFC 6902 JSON Patch. It is Xapiand's universal value type, extracted.
+initializer lists, index it like a map or array, and patch it with RFC 6902 JSON
+Patch. It is Xapiand's universal value type, extracted.
 
 ## ✨ Highlights
 
 - 🧱 **`MsgPack`**: maps, arrays, strings, numbers, and booleans, with typed accessors
   and selectors.
-- 🐄 **Copy-on-write**: copies share storage until one of them changes.
+- 📋 **Deep copies**: a copy duplicates the whole tree into its own zone, so a copy and its
+  source share nothing and a change to one never shows in the other. A move hands the
+  storage over; a reference (`MsgPack&`, `doc["key"]`) aliases the same value.
 - 📦 **MessagePack on the wire**: `serialise()` and `MsgPack::unserialise()`.
 - 🔁 **JSON both ways** through RapidJSON, accepting comments, trailing commas, and
   `NaN`/`Inf`.

@@ -221,8 +221,8 @@ static void test_erase() {
 }
 
 // A MsgPack& (or a sub-object taken by reference) aliases the same value, unlike
-// a copy which is copy-on-write. Ported from Xapiand's oldtests msgpack reference
-// case, and paired here with the COW copy behavior above.
+// a copy, which is deep. Ported from Xapiand's oldtests msgpack reference case,
+// and paired here with the copy behavior above.
 static void test_reference_aliasing() {
 	MsgPack obj = { { "x", "X" }, { "y", "Y" } };
 	MsgPack& alias = obj;
@@ -232,8 +232,8 @@ static void test_reference_aliasing() {
 	assert(alias["z"].str() == "Z");  // and vice versa
 	assert(obj.to_string() == alias.to_string());
 
-	// A sub-object taken by reference mutates the parent in place (COW happens on
-	// copy, not on a reference).
+	// A sub-object taken by reference mutates the parent in place; only a copy
+	// is independent.
 	MsgPack doc = { { "inner", { { "k", 1 } } } };
 	MsgPack& inner = doc["inner"];
 	inner["k"] = 2;
