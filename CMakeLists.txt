@@ -77,6 +77,13 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 	target_include_directories(msgpack_merge_test PRIVATE test)
 	add_test(NAME msgpack_merge COMMAND msgpack_merge_test)
 
+	# Growing an array of maps leaves the maps as they were; under AddressSanitizer it also
+	# reads no freed memory.
+	add_executable(msgpack_growth_test test/growth_test.cc)
+	target_link_libraries(msgpack_growth_test PRIVATE msgpack)
+	target_include_directories(msgpack_growth_test PRIVATE test)
+	add_test(NAME msgpack_growth COMMAND msgpack_growth_test)
+
 	# The value outlives the input buffer, the other values and the threads it came from.
 	find_package(Threads REQUIRED)
 	add_executable(msgpack_lifetime_test test/lifetime_test.cc)

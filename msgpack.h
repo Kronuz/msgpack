@@ -131,7 +131,7 @@ public:
 
 	MsgPack();
 	MsgPack(const MsgPack& other);
-	MsgPack(MsgPack&& other);
+	MsgPack(MsgPack&& other) noexcept;
 	MsgPack(std::initializer_list<MsgPack> list);
 
 	template <typename T, typename = std::enable_if_t<not std::is_same<std::decay_t<T>, std::shared_ptr<Body>>::value>>
@@ -853,7 +853,7 @@ inline MsgPack::MsgPack(const MsgPack& other)
 }
 
 
-inline MsgPack::MsgPack(MsgPack&& other)
+inline MsgPack::MsgPack(MsgPack&& other) noexcept
 	: _body(std::move(other._body)),
 	  _const_body(std::move(other._const_body))
 {
@@ -1060,9 +1060,12 @@ inline void MsgPack::_update_array(size_t pos) {
 	}
 	const auto pend = &_body->_obj->via.array.ptr[_body->_obj->via.array.size];
 	for (auto p = &_body->_obj->via.array.ptr[pos]; p < pend; ++p, ++pos) {
-		// If the previous item was a MAP, force map update.
-		_body->array.at(pos)._body->map.clear();
+		// The element stands for the object now at this position, so what it indexed of the
+		// object that was here is stale: it rebuilds the index of its children when next used.
 		auto& mobj = _body->at(pos);
+		mobj._body->_initialized = false;
+		mobj._body->map.clear();
+		mobj._body->array.clear();
 		mobj._body->_pos = pos;
 		mobj._body->_obj = p;
 		mobj._body->_capacity = mobj._body->size();
