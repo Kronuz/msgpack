@@ -123,11 +123,27 @@ Not for:
 
 ## ⚡ Performance
 
-ns per call for the 502-byte record of `benchmarks/corpus.h`, median of nine
-repetitions. Apple M1 Pro with Apple clang 21, CMake Release (`-O3 -DNDEBUG`).
+`msgpack_benchmark` and `msgpack_compare` run the same operations on the same documents; this
+table is the 502-byte record `med` of [`benchmarks/corpus.h`](benchmarks/corpus.h) (15 keys,
+nested maps and arrays, every scalar type), in ns per call, as the median of nine repetitions.
+A row is an operation: `unserialise` is bytes to a value, `serialise` a value to bytes,
+`to_string` a value to JSON text, "read, set one field, write" is those three steps in a
+row, and "`unserialise`, then visit every node" reads and then walks the whole document. The
+comparators are fetched by the benchmark targets only, at these versions:
+[msgpack-c](https://github.com/msgpack/msgpack-c) 1.3.0 (the copy `MsgPack` is built on;
+`msgpack_compare` also times the current release, `cpp-9.0.0`),
+[nlohmann::json](https://github.com/nlohmann/json) 3.12.0,
+[mpack](https://github.com/ludocode/mpack) 1.1.1, and
+[RapidJSON](https://github.com/Tencent/rapidjson) at the commit the library pins
+(`24b5e7a`). `benchmarks/compare.py` checks that every library that reads the same bytes
+produces the same document (a checksum over every node) and fails when two disagree. A
+comparator that is faster than `MsgPack` shows it: mpack reads into a tree that points into the
+input and copies no string.
+
+Apple M1 Pro (arm64, macOS 27), Apple clang 21.0.0, CMake Release (`-O3 -DNDEBUG`):
 
 | Operation | MsgPack | Compared with |
-| --- | --- | --- |
+| --- | ---: | --- |
 | `unserialise` | 891 | msgpack-c 1.3.0 `unpack` 839, nlohmann::json 3.12.0 `from_msgpack` 5,597, mpack 1.1.1 383 |
 | `serialise` | 602 | msgpack-c 1.3.0 `pack` 550, nlohmann::json 3.12.0 `to_msgpack` 1,507 |
 | `to_string` | 1,515 | RapidJSON `Writer` over a DOM 1,516, nlohmann::json 3.12.0 `dump` 2,380 |
