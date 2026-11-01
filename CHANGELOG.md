@@ -56,28 +56,54 @@ releases, so entries are dated.
   else about the comparison changed. Two sets of steps are left out because the frozen
   implementation is wrong by itself there: changing an array with a map in it (the
   growth bug), and anything after the first exception on a document with a key that
-  is not a string (see Known problems). 33 random documents that repeat a key and
+  is not a string (the frozen implementation misreads a retry; see the fix for a
+  failed fill above). 33 random documents that repeat a key and
   also have a key that is not a string are not compared; the current implementation
   still reads them under the sanitizers. `MSGPACK_DIFF_TRACE=1` names each document
   as it is checked.
+- A fill that throws leaves the map as it was. A map that has a key that is not a string
+  cannot be indexed, and filling it (a lookup, `at`, `[]`, dereferencing an iterator,
+  `erase`, `hash()`) throws "MAP keys must be of type STR". `_init_map` indexed the
+  entries before the bad key and then threw, so the next fill took the keys already
+  indexed for repeats and removed them from the tree: on `{"a":1, 5:2}` the second
+  `erase("a")` gave `serialise()` = `810502` (the frozen code gave `80`, after skipping
+  the non-string key and reading it as a string). `_init_map` now checks the type of
+  every key it is about to index before it changes anything, so the throw leaves the
+  tree, the index and `size()` as they were (repeated keys before the bad key are not
+  merged either) and every later fill throws the same way. `serialise()`, `size()` and
+  copies do not fill, so they work on such a map. `at(size_t)`, which read
+  `via.str` of the key at that position, is only reached after the fill, so it no longer
+  reads a key that is not a string. The oracle is the input bytes:
+  `test/failed_fill_test.cc` (`msgpack_failed_fill`) applies every operation that fills,
+  in any order and as often as it likes, to every kind of key that is not a string in every
+  position with repeats around it, to every document of up to 4 entries over the keys
+  `"a"`, `"b"` and an integer with every sequence of up to 3 of 12 operations (90
+  documents, 169560 sequences), and to 600 random nested documents (8400 steps, 1697 on a
+  bad map) that keep being changed with set, erase, push_back and `erase(index)`
+  against the model (`test/model.h`, whose `Doc` gains a RAW kind). Each call either throws
+  the one exception or leaves `serialise()` equal to the bytes it came as. On the unfixed
+  code it fails on the second `erase`. Three mutants, all killed (`tools/mutants.py`):
+  `revert_failed_fill` (the check back in the loop), `failed_fill_first_key_only` and
+  `failed_fill_last_key_skipped`.
 
 ### Known problems found and left as they are
 
 Each needs an owner decision.
 
-- A fill that throws leaves the map half indexed, and the next fill takes the keys
-  already indexed for repeats. `{"a":1, 5:2}` (a key that is not a string): the first
-  `erase("a")` throws and leaves the document as it was; the second throws again, but
-  has merged `"a"` into itself and dropped it from the tree (`serialise()` gives
-  `810502`, a map of one entry). The frozen code, whose retry then skipped the non-string
-  key and read it as a string, returned 0 and gave `80`. A fix would validate the keys
-  before the first change, or empty the index when `_init_map` throws; it is not made
-  here because it changes what a failed fill leaves behind.
-- `at(size_t)` on a map reads `via.str` of the key at that position without checking
-  its type (undefined behavior for a key that is not a string, reached after the
-  failure above).
+- `put(key, value)` over a key whose value is a map or array that was already read
+  through the API leaves the old value's index on the new value. A map `{"k": {"x":1,
+  "y":2, "w":3}}` read through `doc["k"]["x"]`, then `doc.put("k", {"a":1})`, then
+  `doc["k"]["zz"] = 5`: the assertion `via.map.size == map.size()` fails in a build with
+  assertions, and without them the write reads past the new map (AddressSanitizer: a
+  read of 8 bytes 330 bytes after the 8 KB zone chunk). The frozen implementation reads
+  out of bounds the same way. Putting over a key the map does not have, or over a scalar,
+  is not affected. A fix would reset the value's index in `_put`, as `_update_array` does
+  for an element; it is not made here.
 - `to_string()` reads `via.str` of a map key that is not a string: undefined
   behavior, as `as_document()` did.
+- `lock()` on a document with a map nested under a map that has a key that is not a
+  string throws from the nested fill after the maps above it were locked, so a failed
+  `lock()` leaves part of the document locked.
 
 ## 2026-10-31
 

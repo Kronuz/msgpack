@@ -30,6 +30,8 @@ A value owns a `Body`: a `msgpack::zone` (the arena that holds the tree), the ro
 
 **Growing an array moves its elements.** The element bodies of an array live in a `std::vector<MsgPack>`, and `MsgPack(MsgPack&&)` is `noexcept` so that the vector moves them when it reallocates. A copy would give each element a zone of its own, which the element's children then write strings into and which the vector frees with the old elements (`test/growth_test.cc`, under AddressSanitizer).
 
+**A fill that throws changes nothing.** A map with a key that is not a string cannot be indexed. `_init_map` checks the type of every key it is about to index before it changes the tree or the index, so the exception (`MAP keys must be of type STR`) leaves the map as it came: repeated keys before the bad key are not merged, `size()` still counts the entries as they came, `serialise()` and copies work, and every later operation that fills the map throws the same way (`test/failed_fill_test.cc`).
+
 **Copies are deep.** `MsgPack(const MsgPack&)` and `operator=(const MsgPack&)` allocate a new zone and copy every node into it (`object_with_zone`). The copy and its source share nothing. A copy costs time and memory in proportion to the size of the value; a move transfers the `shared_ptr<Body>` and costs one pointer swap.
 
 **The tree is the source of truth.** The index of `Body` objects is built on first touch of a map or array and always points into the tree, so an operation that only reads the data can read the tree directly:
@@ -58,7 +60,7 @@ The vendored `msgpack/exception.hpp` still includes `exception.h` directly. In s
 
 - **Wire format is byte-identical.** Do not change the `UNDEFINED` extension type, msgpack-c pack/unpack behavior, or the serialised bytes emitted by `MsgPack::serialise()`.
 - **Copy semantics are preserved.** A copy is deep. Lazy fill, reserve, map key storage, and parent/key update behavior are lifted from Xapiand.
-- **`unserialise`, `hash()` and `to_string()` give what the earlier implementation gave**, for every input except the two that implementation got wrong (a repeated key in a map, and growing an array of maps; see the CHANGELOG): the same values, offsets, exceptions, and the same changes to the tree. `test/diff_test.cc` checks them against the frozen `test/frozen_msgpack.h`, reading a document that repeats a key as the merged document on the frozen side. `test/merge_test.cc` and `test/growth_test.cc` hold the two fixes to a model.
+- **`unserialise`, `hash()` and `to_string()` give what the earlier implementation gave**, for every input except the three that implementation got wrong (a repeated key in a map, growing an array of maps, and a fill that throws on a key that is not a string; see the CHANGELOG): the same values, offsets, exceptions, and the same changes to the tree. `test/diff_test.cc` checks them against the frozen `test/frozen_msgpack.h`, reading a document that repeats a key as the merged document on the frozen side. `test/merge_test.cc` and `test/growth_test.cc` hold the two fixes to a model.
 - **The msgpack-c fork stays forked.** Its exceptions inherit `BaseException` by design.
 - **RapidJSON stays lenient.** The parse flags for comments, trailing commas, and NaN/Inf are part of Xapiand behavior.
 - **Names and layout stay stable.** Consumers include the same file names they did inside Xapiand.

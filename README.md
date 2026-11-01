@@ -20,7 +20,9 @@ Patch. It is Xapiand's universal value type, extracted.
 - 🗝️ **A map holds each key once**: when a document repeats a key, the last value wins and
   the entry keeps the position of the first. The merge is made when the map is first
   read or changed through the API (a lookup, a walk, `hash()`, `erase`); `serialise()` and
-  `size()` of a map nothing has touched give the document as it came.
+  `size()` of a map nothing has touched give the document as it came. A map with a key that
+  is not a string cannot be read or changed by key: the call throws `MAP keys must be of
+  type STR` and changes nothing, so the next call throws the same way.
 - 📦 **MessagePack on the wire**: `serialise()` and `MsgPack::unserialise()`.
 - 🔁 **JSON both ways** through RapidJSON, accepting comments, trailing commas, and
   `NaN`/`Inf`.
