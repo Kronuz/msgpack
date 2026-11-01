@@ -31,6 +31,26 @@ releases, so entries are dated.
 
 ### Fixed
 
+- `to_string()` writes a float that is NaN or infinite as `null`, and the text no longer stops there.
+  JSON has neither number, and the RapidJSON Writer refuses them (it returns false unless it is told to
+  write the names, which is not JSON), so the calls `to_string()` made, the ones of `Document::Accept`,
+  ended the text at the first one: `{"v":NaN,"w":1}` gave `{"v":` and any document after the number was
+  cut. The number is now a `Null()` call (`msgpack_wrapper::accept`, in `xchange/rapidjson.hpp`), as
+  `JSON.stringify` writes it, so the text is always JSON, compact and indented. Reading it back gives a
+  null, not the number, and `as_document()` keeps the number (a Writer told to write NaN and Inf writes
+  the names), as before. As a map key the number is its name, `"NaN"`, `"Infinity"` or `"-Infinity"` (the
+  key rule above); inside an array or a map used as a key it is `null`, as in any value. The text of
+  a document without such a number is unchanged. `test/model.h`'s JSON writer (`reference_json`) holds
+  the rule, and `test/json_keys_test.cc` checks `to_string()`, compact and indented, and
+  `as_document()` written by a Writer that writes the names, for 361 hand-written documents (every
+  key and value type, 9 exact texts of non-finite numbers) and 4000 random ones with the numbers (float32
+  and float64) at any depth, and that the text parses with the strictest parser (no NaN or Inf). On
+  the earlier code it fails on the first NaN value (`{"v":` for `{"v":null}`). `test/diff_test.cc`
+  keeps comparing the text of such a document with the frozen implementation's, which stops at the
+  number: the frozen text must be the beginning of the current one (1,718 texts in the run; equal when a
+  mutation erased the number first). Six mutants, all killed (`nonfinite_value_stops`,
+  `nonfinite_only_nan`, `nonfinite_as_zero`, `nonfinite_key_null`, `nonfinite_key_sign_lost`,
+  `nonfinite_key_unchecked`).
 - `to_string()` and `as_document()` write a map key that is not a string without undefined behavior.
   Both read `via.str` of every key, so a key of another type gave whatever bytes the union held where
   a `str` has its pointer: garbage text (`{5:1}` came out as `{"i&@\xef\xbf\xbdj":1}`) or a crash. A key
@@ -221,9 +241,6 @@ Each needs an owner decision.
 - An allocation that fails part way through `update()` leaves the entries before it applied (the
   value stays consistent and usable). Making it atomic for memory needs a copy of the value to build
   the result aside, which costs the whole value on every call and invalidates references held into it.
-- A float that is not finite as a value (not as a key) stops the text of `to_string()` at that value,
-  as `as_document().Accept(writer)` always did, so the text is not JSON; the text before it is kept for
-  identity with the earlier output.
 - A `MsgPack&` to a child of a value that is replaced, erased or cleared is gone with the value, as
   with any container; a reference to an element itself is invalidated when an earlier element of its
   array is erased (the elements move up).
@@ -265,7 +282,7 @@ Each needs an owner decision.
   `PrettyWriter`) that `Document::Accept` made for the document `as_document()`
   built, in the same order and stopping at the first `false`; the Document is not
   built. The text is identical, including the partial text before a `NaN` or
-  `Inf` and the indented form. arm64: 2.2x to 2.5x / 1.5x / 1.3x to 1.5x / 1.5x to 1.65x
+  `Inf` (a `NaN` or `Inf` is `null` since 2026-11-01, above) and the indented form. arm64: 2.2x to 2.5x / 1.5x / 1.3x to 1.5x / 1.5x to 1.65x
   (two runs, noisy rows); x86_64 1.75x / 1.58x / 1.68x / 1.83x. `as_document()` is unchanged.
 
 Measured with a benchmark harness that was not yet part of this repository (the rows of

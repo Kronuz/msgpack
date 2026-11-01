@@ -23,7 +23,10 @@ and code that shares Xapiand's value type.
 - **MessagePack on the wire.** `serialise()` writes the bytes and
   `MsgPack::unserialise()` reads them.
 - **JSON both ways.** `to_string()` and `as_document()` write JSON through
-  RapidJSON, and reading accepts comments, trailing commas, and `NaN`/`Inf`.
+  RapidJSON, and reading accepts comments, trailing commas, and `NaN`/`Inf`. JSON
+  has no NaN or Infinity, so `to_string()` writes a float that is NaN or infinite as
+  `null`, as `JSON.stringify` does, and the text is always JSON; reading the text
+  back gives a null, not the number. `as_document()` keeps the number.
 - **`update()` merges a map into a value.** Each entry is applied in order: an
   undefined value erases the key, a key the value lacks is added, two maps merge,
   anything else replaces, and a value that is not a map replaces the whole target.
@@ -104,11 +107,10 @@ Not for:
   `to_string()` and `as_document()` write each as its own JSON text: `5` as `"5"`,
   `-1.5` as `"-1.5"`, `true` as `"true"`, `null` and an ext as `"null"`, a float
   that is not finite as `"NaN"`, `"Infinity"` or `"-Infinity"`, an array or a map
-  as its text (`[1,"a"]`, `{"5":1}`, quoted). A `bin` key is written as its bytes,
+  as its text (`[1,"a"]`, `{"5":1}`, quoted; a number that is not finite inside it
+  is `null`). A `bin` key is written as its bytes,
   as a `str` is. Two keys can give the same text (`5` and `"5"`), and then the
   JSON repeats the key.
-- **JSON of values that are not finite.** A float value that is NaN or infinite
-  stops the text of `to_string()` at that value, so the text is not JSON.
 - **Updates that are atomic for memory.** An allocation that fails part way
   through `update()` leaves the entries before it applied; the value stays
   consistent and usable.
