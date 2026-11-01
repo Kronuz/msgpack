@@ -283,7 +283,7 @@ struct object_with_zone<msgpack::object> {
             char* ptr = static_cast<char*>(o.zone.allocate_align(v.via.str.size));
             o.via.str.ptr = ptr;
             o.via.str.size = v.via.str.size;
-            std::memcpy(ptr, v.via.str.ptr, v.via.str.size);
+            if (v.via.str.size) std::memcpy(ptr, v.via.str.ptr, v.via.str.size);
             return;
         }
 
@@ -291,7 +291,7 @@ struct object_with_zone<msgpack::object> {
             char* ptr = static_cast<char*>(o.zone.allocate_align(v.via.bin.size));
             o.via.bin.ptr = ptr;
             o.via.bin.size = v.via.bin.size;
-            std::memcpy(ptr, v.via.bin.ptr, v.via.bin.size);
+            if (v.via.bin.size) std::memcpy(ptr, v.via.bin.ptr, v.via.bin.size);
             return;
         }
 
