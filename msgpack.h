@@ -3300,26 +3300,76 @@ inline T& operator/=(T& o, const M& m) {
 }
 
 
+#ifndef WITHOUT_RAPIDJSON
+namespace msgpack_wrapper {
+	// Makes the handler calls that `rapidjson::Document::Accept` makes for the document that
+	// `as_document()` builds from `o`, and stops at the first one that returns false.
+	template <typename Handler>
+	inline bool accept(const msgpack::object& o, Handler& handler) {
+		switch (o.type) {
+			case msgpack::type::BOOLEAN:
+				return handler.Bool(o.via.boolean);
+			case msgpack::type::POSITIVE_INTEGER:
+				return handler.Uint64(o.via.u64);
+			case msgpack::type::NEGATIVE_INTEGER:
+				return handler.Int64(o.via.i64);
+			case msgpack::type::FLOAT:
+				return handler.Double(o.via.f64);
+			case msgpack::type::BIN: // fall through
+			case msgpack::type::STR:
+				return handler.String(o.via.str.ptr, o.via.str.size);
+			case msgpack::type::ARRAY: {
+				if (!handler.StartArray()) {
+					return false;
+				}
+				const msgpack::object* const pend = o.via.array.ptr + o.via.array.size;
+				for (const msgpack::object* p = o.via.array.ptr; p < pend; ++p) {
+					if (!accept(*p, handler)) {
+						return false;
+					}
+				}
+				return handler.EndArray(o.via.array.size);
+			}
+			case msgpack::type::MAP: {
+				if (!handler.StartObject()) {
+					return false;
+				}
+				const msgpack::object_kv* const pend = o.via.map.ptr + o.via.map.size;
+				for (const msgpack::object_kv* p = o.via.map.ptr; p < pend; ++p) {
+					if (!handler.Key(p->key.via.str.ptr, p->key.via.str.size)) {
+						return false;
+					}
+					if (!accept(p->val, handler)) {
+						return false;
+					}
+				}
+				return handler.EndObject(o.via.map.size);
+			}
+			case msgpack::type::NIL: // fall through
+			default:
+				return handler.Null();
+		}
+	}
+}
+#endif
+
+
 inline std::string MsgPack::to_string([[maybe_unused]] int indent) const {
 #ifdef WITHOUT_RAPIDJSON
 	std::ostringstream oss;
 	oss << *_const_body->_obj;
 	return oss.str();
 #else
+	rapidjson::StringBuffer buffer;
 	if (indent >= 0) {
-		rapidjson::Document doc = as_document();
-		rapidjson::StringBuffer buffer;
 		rapidjson::PrettyWriter<rapidjson::StringBuffer> writer(buffer);
 		writer.SetIndent(' ', indent);
-		doc.Accept(writer);
-		return std::string(buffer.GetString(), buffer.GetSize());
+		msgpack_wrapper::accept(*_const_body->_obj, writer);
 	} else {
-		rapidjson::Document doc = as_document();
-		rapidjson::StringBuffer buffer;
 		rapidjson::Writer<rapidjson::StringBuffer> writer(buffer);
-		doc.Accept(writer);
-		return std::string(buffer.GetString(), buffer.GetSize());
+		msgpack_wrapper::accept(*_const_body->_obj, writer);
 	}
+	return std::string(buffer.GetString(), buffer.GetSize());
 #endif
 }
 

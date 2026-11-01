@@ -76,6 +76,15 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 	target_link_libraries(msgpack_lifetime_test PRIVATE msgpack Threads::Threads)
 	add_test(NAME msgpack_lifetime COMMAND msgpack_lifetime_test)
 
+	# Allocation counts against the frozen implementation. It replaces global operator new, which
+	# the sanitizer runtimes also define, so it is not built under a sanitizer.
+	if(NOT "${CMAKE_CXX_FLAGS} ${CMAKE_CXX_FLAGS_${CMAKE_BUILD_TYPE}} ${CMAKE_EXE_LINKER_FLAGS}" MATCHES "sanitize")
+		add_executable(msgpack_alloc_test test/alloc_test.cc)
+		target_link_libraries(msgpack_alloc_test PRIVATE msgpack)
+		target_include_directories(msgpack_alloc_test PRIVATE test)
+		add_test(NAME msgpack_alloc COMMAND msgpack_alloc_test)
+	endif()
+
 	add_executable(msgpack_demo examples/demo.cc)
 	target_link_libraries(msgpack_demo PRIVATE msgpack)
 
