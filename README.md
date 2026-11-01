@@ -17,6 +17,10 @@ Patch. It is Xapiand's universal value type, extracted.
 - 📋 **Deep copies**: a copy duplicates the whole tree into its own zone, so a copy and its
   source share nothing and a change to one never shows in the other. A move hands the
   storage over; a reference (`MsgPack&`, `doc["key"]`) aliases the same value.
+- 🗝️ **A map holds each key once**: when a document repeats a key, the last value wins and
+  the entry keeps the position of the first. The merge is made when the map is first
+  read or changed through the API (a lookup, a walk, `hash()`, `erase`); `serialise()` and
+  `size()` of a map nothing has touched give the document as it came.
 - 📦 **MessagePack on the wire**: `serialise()` and `MsgPack::unserialise()`.
 - 🔁 **JSON both ways** through RapidJSON, accepting comments, trailing commas, and
   `NaN`/`Inf`.

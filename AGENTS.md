@@ -19,11 +19,14 @@ msgpack_exception.h           Standalone exception seam over located-exception.
 likely.h                      Vendored likely()/unlikely().
 examples/demo.cc              Build, serialise, JSON round-trip, patch.
 test/test.cc                  ctest coverage for value, copies, patch, xchange.
-test/diff_test.cc             ctest msgpack_diff: random documents and operations against the frozen test/frozen_msgpack.h.
+test/model.h                  Reference models: the merged document, the hash of it, and a JSON-like Doc the tests edit like a MsgPack.
+test/diff_test.cc             ctest msgpack_diff: random documents and operations against the frozen test/frozen_msgpack.h (a document that repeats a key is read as its merged form on the frozen side).
+test/merge_test.cc            ctest msgpack_merge: repeated keys (last value wins, position of the first) against the model: hand-written, exhaustive and random documents.
+test/growth_test.cc           ctest msgpack_growth: pushing onto and changing arrays of maps against the model; reads no freed memory under AddressSanitizer.
 test/frozen_msgpack.h         The earlier msgpack.h with MsgPack renamed MsgPackOld. The oracle: never edit it.
 test/lifetime_test.cc         ctest msgpack_lifetime: values outlive the input, the other values and threads.
 test/alloc_test.cc            ctest msgpack_alloc: allocation counts of unserialise, hash() and to_string() against the frozen copy.
-tools/mutants.py              Edits the implementation 15 ways and puts the previous unserialise, hash() and to_string() back; a test must fail on each.
+tools/mutants.py              Edits the implementation 26 ways (the previous unserialise, hash() and to_string() put back; the merge and the growth fixes undone and broken five more ways); a test must fail on each.
 benchmarks/pack_unpack.cc     Small pack/unpack throughput harness.
 CHANGELOG.md                  Dated changes, numbers and known problems.
 ```
@@ -35,7 +38,8 @@ CMake fetches `atomic-shared-ptr`, `enum-reflection`, `strict-stox`, `located-ex
 ## Invariants
 
 - **Behavior-preserving extraction.** Do not rewrite algorithms or simplify the wrapper. Keep the original wire format, selector behavior, growth strategy, and lazy fill behavior.
-- **`unserialise`, `hash()` and `to_string()` work on the msgpack tree and must give what `test/frozen_msgpack.h` gives**: values, offsets, exceptions, and the changes to the tree. `hash()` takes the tree path only for a map whose keys, and those of the maps nested in it, are strings and do not repeat; a repeated key sends it to the filling code, which merges the repeats in the tree (and which is not correct, see CHANGELOG). Do not make the tree path handle repeats: the result of `hash()`, `serialise()` and copies afterwards depends on the merge. Run `msgpack_diff` after any change to those three, and the lifetime test under AddressSanitizer after one to `Body`.
+- **`unserialise`, `hash()` and `to_string()` work on the msgpack tree and must give what `test/frozen_msgpack.h` gives**: values, offsets, exceptions, and the changes to the tree. The exceptions are the two things the frozen copy gets wrong, both fixed: a map that repeats a key (the last value wins, in the position of the first; the frozen copy copies the wrong entry), and growing an array of maps (the frozen copy copies its elements). `msgpack_diff` reads a document that repeats a key as the merged document on the frozen side, so a change to the merge belongs in `test/merge_test.cc`, against the `std::map` model. `hash()` takes the tree path only for a map whose keys, and those of the maps nested in it, are strings and do not repeat; a repeated key sends it to the filling code, which merges the repeats in the tree. Do not make the tree path handle repeats: the result of `hash()`, `serialise()` and copies afterwards depends on the merge. Run `msgpack_diff` after any change to those three, and the lifetime and growth tests under AddressSanitizer after one to `Body` or to the arrays.
+- **Keep `MsgPack(MsgPack&&)` `noexcept`.** A `std::vector<MsgPack>` copies its elements when it reallocates otherwise, and each copy has a zone of its own that its children write into (`msgpack_growth` fails under AddressSanitizer).
 - **The exception fork is load-bearing.** `msgpack/exception.hpp` must keep inheriting `BaseException`. Xapiand relies on catching these types through its hierarchy.
 - **The seam is compile-time.** Standalone uses `msgpack_exception.h`; Xapiand defines `MSGPACK_EXCEPTION_HEADER` to its `src/exception.h`.
 - **RapidJSON parse flags are part of behavior.** Keep comments, trailing commas, and NaN/Inf accepted.

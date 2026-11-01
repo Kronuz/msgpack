@@ -4,6 +4,81 @@ All notable changes to `msgpack`. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); the library has no
 releases, so entries are dated.
 
+## 2026-11-01
+
+### Fixed
+
+- A map that repeats a key is merged correctly. The last value wins and the entry
+  keeps the position of the key's first occurrence, so
+  `{"a":1,"a":2,"b":3,"c":4}` is `{"a":2,"b":3,"c":4}`; it used to be
+  `{"a":2,"b":3,"b":3}`. `_init_map` copied the entry after the repeat over every
+  later entry (`*q = *(p + 1)` where `*(q + 1)` was meant) and skipped the entry
+  it moved, so `c` was lost, `b` repeated, the index of the map disagreed with the
+  tree (`assert(via.map.size == map.size())` failed in a build with assertions) and
+  `erase(key)` then dereferenced the end iterator. The merge runs when a map is
+  first filled (a lookup, a walk, `hash()`, `erase`); `serialise()` and `size()` of a
+  map nothing has filled still give the document as it came. The reference is a
+  `std::map` model (`test/model.h`): `test/merge_test.cc` (`msgpack_merge`) checks
+  lookups, `erase`, writes, `hash()`, copies and round trips against it on
+  hand-written documents, on every document of up to 6 entries over 3 keys (1092),
+  and on 3000 random nested ones (2348 with a repeat).
+  What a consumer sees: for a document that repeats a key, `hash()` is now the hash
+  of the merged map (it was the hash of the corrupted one), and so are `serialise()`
+  and a copy after the first fill. Documents without a repeated key are unchanged,
+  and `hash()` of one still allocates nothing.
+- Pushing onto an array of maps after touching some of its elements no longer reads
+  freed memory. The cause was `MsgPack(MsgPack&&)` not being `noexcept`: when
+  `std::vector<MsgPack>` reallocated (`_init_array`, `reserve`), it deep-copied
+  every element, and each copy had a zone of its own. `_update_array` then
+  pointed the copy at the parent's tree while its `_zone` stayed the copy's, so a
+  string written through the element's children (`array[i]["name"] = ...`) was
+  allocated in the copy's zone and stored in the parent's tree, and the vector
+  freed that zone with the old elements. The move constructor is `noexcept` (its
+  body only moves `shared_ptr`s), so the vector moves its elements. `_update_array`
+  also makes an element rebuild the index of its children when the element now
+  stands for another object (after the elements moved, and after `erase(index)`),
+  which a copy used to do by accident. `test/growth_test.cc` (`msgpack_growth`):
+  400 records, then `push_back` of a record and a write to `array[i]["name"]`
+  800 times, on a built and on an unserialised array, and 400 random sequences of
+  push, set, erase and read on arrays of maps, against the model; under
+  AddressSanitizer it reads no freed memory.
+- Proof that each test fails without its fix (`tools/mutants.py`, 7 new
+  mutants, all killed, x86_64 Linux, clang 12 with AddressSanitizer and
+  UBSan): `revert_merge` (the old shift, no re-visit of the moved entry; the index
+  assertion), `merge_shifts_from_p`, `merge_skips_moved_entry`,
+  `merge_first_value_wins`, `merge_size_not_reduced`, `revert_growth` (no
+  `noexcept`; AddressSanitizer, and without it a mismatch with the model) and
+  `update_array_keeps_index`. On the unfixed code `msgpack_merge` aborts on the index
+  assertion and `msgpack_growth` fails.
+- `test/diff_test.cc` reads a document that repeats a string key as the merged document on
+  the frozen side (`model::merged`), the current implementation reads it as it is and
+  fills every map first, and `hash()` of the original is held to the model's. Nothing
+  else about the comparison changed. Two sets of steps are left out because the frozen
+  implementation is wrong by itself there: changing an array with a map in it (the
+  growth bug), and anything after the first exception on a document with a key that
+  is not a string (see Known problems). 33 random documents that repeat a key and
+  also have a key that is not a string are not compared; the current implementation
+  still reads them under the sanitizers. `MSGPACK_DIFF_TRACE=1` names each document
+  as it is checked.
+
+### Known problems found and left as they are
+
+Each needs an owner decision.
+
+- A fill that throws leaves the map half indexed, and the next fill takes the keys
+  already indexed for repeats. `{"a":1, 5:2}` (a key that is not a string): the first
+  `erase("a")` throws and leaves the document as it was; the second throws again, but
+  has merged `"a"` into itself and dropped it from the tree (`serialise()` gives
+  `810502`, a map of one entry). The frozen code, whose retry then skipped the non-string
+  key and read it as a string, returned 0 and gave `80`. A fix would validate the keys
+  before the first change, or empty the index when `_init_map` throws; it is not made
+  here because it changes what a failed fill leaves behind.
+- `at(size_t)` on a map reads `via.str` of the key at that position without checking
+  its type (undefined behavior for a key that is not a string, reached after the
+  failure above).
+- `to_string()` reads `via.str` of a map key that is not a string: undefined
+  behavior, as `as_document()` did.
+
 ## 2026-10-31
 
 ### Changed
@@ -29,8 +104,8 @@ releases, so entries are dated.
   packed bytes for every other value. arm64: small 7.93x, med 3.94x, large (an
   array root, which packs the whole 104 KB) 1.15x; x86_64 12.88x, 6.64x, 1.13x.
   A map with a repeated key, or a key that is not a string, anywhere in the maps
-  it reaches through maps takes the filling path as before, so those hash
-  identically and leave the tree as before (see Known problems).
+  it reaches through maps takes the filling path as before, and so merges the
+  repeats in the tree (see 2026-11-01, Fixed).
   `hash()` no longer fills the maps it reads, so it is safe to call from several
   threads on one value when no key repeats.
 - `MsgPack::to_string` makes the calls on the RapidJSON `Writer` (or
@@ -100,26 +175,11 @@ and run interleaved (old, new, old, new).
 
 ### Known problems found and left as they are
 
-These are in the code the frozen copy keeps, and the differential test holds the
-current code to the same behavior. Each needs an owner decision.
-
-- Merging a repeated key is wrong. `_init_map` copies the entry after the repeat
-  over every later entry (`*q = *(p + 1)` where `*(q + 1)` is meant) and then
-  skips the entry it moved, so `{"a":1,"a":2,"b":3,"c":4}` becomes
-  `{"a":2,"b":3,"b":3}`: `c` is lost, `b` repeats, and the map index disagrees
-  with the tree (`assert(via.map.size == map.size())` fails in a build with
-  assertions). It runs the first time a map with a repeated key is filled: by
-  `hash()`, a lookup, a walk. `erase(key)` on such a map then dereferences the end
-  iterator (`_update_map`), a crash.
-- Pushing elements onto an array of maps after touching some of them reads freed
-  memory (`_init_array` copies the elements of a `std::vector<MsgPack>` whose
-  nested bodies hold their own zone): 400 records, then 800 times `push_back`
-  of a record and a write to `array[i]["name"]`. AddressSanitizer reports it on
-  the frozen copy too.
-- `to_string()` reads `via.str` of a map key that is not a string: undefined
-  behavior, as `as_document()` did.
-- A `std::vector<MsgPack>` growth copies every element, because `MsgPack(MsgPack&&)`
-  is not `noexcept`: each copy is a deep copy of that element.
+These were in the code the frozen copy keeps, and the differential test held the
+current code to the same behavior. The merge of a repeated key, the read of freed
+memory when an array of maps grows, and the copy of every element when a
+`std::vector<MsgPack>` grows were fixed on 2026-11-01 (above); `to_string()` on a key
+that is not a string is still open and is listed there.
 
 ### Not done
 
