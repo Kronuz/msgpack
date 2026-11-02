@@ -10,13 +10,13 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # --- Dependencies (the Kronuz family, tracked at tip) ---
-FetchContent_Declare(atomic_shared_ptr GIT_REPOSITORY https://github.com/Kronuz/atomic-shared-ptr.git GIT_TAG 283dd3827efb034821f4c2b55e9426c714c23dd0)
-FetchContent_Declare(enum_reflection  GIT_REPOSITORY https://github.com/Kronuz/enum-reflection.git     GIT_TAG 8a9e1d8a921f2c583df12ee31a9d43982fdf8b99)
-FetchContent_Declare(strict_stox      GIT_REPOSITORY https://github.com/Kronuz/strict-stox.git         GIT_TAG dc24d9f68eb68992c85a1fa10f3ce5480b7e2ec7)
-FetchContent_Declare(located_exception GIT_REPOSITORY https://github.com/Kronuz/located-exception.git  GIT_TAG 901c2b69c48ba3a88b014807450ce3be15f73f71)
-FetchContent_Declare(constexpr_phf    GIT_REPOSITORY https://github.com/Kronuz/constexpr-phf.git       GIT_TAG 183081ea89f030f214348374c2cc3e5efb741933)
-FetchContent_Declare(hashes           GIT_REPOSITORY https://github.com/Kronuz/hashes.git              GIT_TAG ffa2f5c7d5fa3ab576f1c32b43733ef3633199cd)
-FetchContent_Declare(repr             GIT_REPOSITORY https://github.com/Kronuz/repr.git                GIT_TAG 12ea8805c41484795712b53bd7303e49021aaf0b)
+FetchContent_Declare(atomic_shared_ptr GIT_REPOSITORY https://github.com/Kronuz/atomic-shared-ptr.git GIT_TAG 9af0aa765fea19b4c7d05d6663ad3a7bff7c5530)
+FetchContent_Declare(enum_reflection  GIT_REPOSITORY https://github.com/Kronuz/enum-reflection.git     GIT_TAG 653fb34844e63517da14659cc8f063643bf4a085)
+FetchContent_Declare(strict_stox      GIT_REPOSITORY https://github.com/Kronuz/strict-stox.git         GIT_TAG b947d77073914132dc155ce3bf7084f4465bf9df)
+FetchContent_Declare(located_exception GIT_REPOSITORY https://github.com/Kronuz/located-exception.git  GIT_TAG 9cce2c7f77e6f47414fa5d9b9609f125d811b1d5)
+FetchContent_Declare(constexpr_phf    GIT_REPOSITORY https://github.com/Kronuz/constexpr-phf.git       GIT_TAG 1d82461008c897ab004652d5c43e60ccfa7012cb)
+FetchContent_Declare(hashes           GIT_REPOSITORY https://github.com/Kronuz/hashes.git              GIT_TAG e3bf5b6167775f26dd14f89f210f687b0253241b)
+FetchContent_Declare(repr             GIT_REPOSITORY https://github.com/Kronuz/repr.git                GIT_TAG 87450b43c6ff113a321e06d811d9b7a4857c9351)
 FetchContent_MakeAvailable(
 	atomic_shared_ptr
 	enum_reflection
