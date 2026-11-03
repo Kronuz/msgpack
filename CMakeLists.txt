@@ -12,7 +12,7 @@ endif()
 # --- Dependencies (the Kronuz family, tracked at tip) ---
 FetchContent_Declare(atomic_shared_ptr GIT_REPOSITORY https://github.com/Kronuz/atomic-shared-ptr.git GIT_TAG 9af0aa765fea19b4c7d05d6663ad3a7bff7c5530)
 FetchContent_Declare(enum_reflection  GIT_REPOSITORY https://github.com/Kronuz/enum-reflection.git     GIT_TAG 653fb34844e63517da14659cc8f063643bf4a085)
-FetchContent_Declare(strict_stox      GIT_REPOSITORY https://github.com/Kronuz/strict-stox.git         GIT_TAG b947d77073914132dc155ce3bf7084f4465bf9df)
+FetchContent_Declare(strict_stox      GIT_REPOSITORY https://github.com/Kronuz/strict-stox.git         GIT_TAG 1f9190ca19bbb5291456c54f3ff34982e0083113)
 FetchContent_Declare(located_exception GIT_REPOSITORY https://github.com/Kronuz/located-exception.git  GIT_TAG 0c7e5df8b367dd09c7137d711544789f9451dd0b)
 FetchContent_Declare(constexpr_phf    GIT_REPOSITORY https://github.com/Kronuz/constexpr-phf.git       GIT_TAG 1d82461008c897ab004652d5c43e60ccfa7012cb)
 FetchContent_Declare(hashes           GIT_REPOSITORY https://github.com/Kronuz/hashes.git              GIT_TAG e3bf5b6167775f26dd14f89f210f687b0253241b)
