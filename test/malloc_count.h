@@ -2,6 +2,15 @@
 // request over 256 MiB so a hostile header costs a counted request, not memory. Include before any msgpack
 // header; the standard headers come first so the macro touches msgpack's code only.
 #pragma once
+#include <errno.h>
+#include <limits.h>
+#include <math.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <wchar.h>
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -13,6 +22,9 @@
 #include <deque>
 #include <iostream>
 #include <iterator>
+#include <memory_resource>
+#include <optional>
+#include <variant>
 #include <fstream>
 #include <functional>
 #include <iomanip>
@@ -59,5 +71,6 @@ inline void* counting_realloc(void* p, std::size_t n) {
 }
 inline void reset_requests() { g_requested = 0; g_largest_request = 0; g_calls = 0; }
 
-#define malloc counting_malloc
-#define realloc counting_realloc
+// Function-like, so a later header's `using std::malloc;` is left alone.
+#define malloc(n) counting_malloc(n)
+#define realloc(p, n) counting_realloc(p, n)
