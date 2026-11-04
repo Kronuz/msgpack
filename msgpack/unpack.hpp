@@ -17,7 +17,9 @@
 #include "cpp_config.hpp"
 #include "sysdep.h"
 
+#include <algorithm>
 #include <cassert>
+#include <cstring>
 #include <memory>
 #include <stdexcept>
 
@@ -163,12 +165,15 @@ inline void unpack_true(msgpack::object& o)
 inline void unpack_false(msgpack::object& o)
 { o.type = msgpack::type::BOOLEAN; o.via.boolean = false; }
 
+// An array or map header only reserves `reserve` items (at most the declared n): the context
+// grows the storage as the items arrive, so a header never costs more than its bytes justify.
 struct unpack_array {
-    void operator()(unpack_user& u, uint32_t n, msgpack::object& o) const {
+    static std::size_t bytes_per_item() { return 1; }
+    void operator()(unpack_user& u, uint32_t n, std::size_t reserve, msgpack::object& o) const {
         if (n > u.limit().array()) THROW(msgpack::array_size_overflow, "array size overflow");
         o.type = msgpack::type::ARRAY;
         o.via.array.size = 0;
-        o.via.array.ptr = static_cast<msgpack::object*>(u.zone().allocate_align(n*sizeof(msgpack::object)));
+        o.via.array.ptr = static_cast<msgpack::object*>(u.zone().allocate_align(reserve*sizeof(msgpack::object)));
     }
 };
 
@@ -182,11 +187,12 @@ inline void unpack_array_item(msgpack::object& c, msgpack::object const& o)
 }
 
 struct unpack_map {
-    void operator()(unpack_user& u, uint32_t n, msgpack::object& o) const {
+    static std::size_t bytes_per_item() { return 2; }
+    void operator()(unpack_user& u, uint32_t n, std::size_t reserve, msgpack::object& o) const {
         if (n > u.limit().map()) THROW(msgpack::map_size_overflow, "map size overflow");
         o.type = msgpack::type::MAP;
         o.via.map.size = 0;
-        o.via.map.ptr = static_cast<msgpack::object_kv*>(u.zone().allocate_align(n*sizeof(msgpack::object_kv)));
+        o.via.map.ptr = static_cast<msgpack::object_kv*>(u.zone().allocate_align(reserve*sizeof(msgpack::object_kv)));
     }
 };
 
@@ -263,11 +269,20 @@ public:
     void set_container_type(uint32_t container_type) { m_container_type = container_type; }
     msgpack::object const& map_key() const { return m_map_key; }
     void set_map_key(msgpack::object const& map_key) { m_map_key = map_key; }
+    // Items the storage of the array or map holds.
+    std::size_t capacity() const { return m_capacity; }
+    void set_capacity(std::size_t capacity) { m_capacity = capacity; }
+    // Bytes the reservation still counts on, released as the items start.
+    std::size_t claim() const { return m_claim; }
+    void set_claim(std::size_t claim) { m_claim = claim; }
+    void decr_claim() { --m_claim; }
 private:
     msgpack::object m_obj;
     std::size_t m_count;
     uint32_t m_container_type;
     msgpack::object m_map_key;
+    std::size_t m_capacity = 0;
+    std::size_t m_claim = 0;
 };
 
 inline void init_count(void* buffer)
@@ -354,7 +369,7 @@ inline void load(T& dst, const char* n, typename msgpack::enable_if<sizeof(T) ==
 class context {
 public:
     context(unpack_reference_func f, void* user_data, unpack_limit const& limit)
-        :m_trail(0), m_user(f, user_data, limit), m_cs(MSGPACK_CS_HEADER)
+        :m_end(nullptr), m_claimed(0), m_trail(0), m_user(f, user_data, limit), m_cs(MSGPACK_CS_HEADER)
     {
         m_stack.reserve(MSGPACK_EMBED_STACK_SIZE);
         m_stack.push_back(unpack_stack());
@@ -364,6 +379,7 @@ public:
     {
         m_cs = MSGPACK_CS_HEADER;
         m_trail = 0;
+        m_claimed = 0;
         m_stack.resize(1);
         m_stack[0].set_obj(msgpack::object());
     }
@@ -401,7 +417,12 @@ private:
         std::size_t& off) {
         typename value<T>::type tmp;
         load<T>(tmp, load_pos);
-        f(m_user, tmp, m_stack.back().obj());
+        // An item takes at least bytes_per_item() bytes: reserve what the bytes after the header,
+        // less those other reservations count on, can hold. The rest is allocated as items arrive.
+        const std::size_t after = static_cast<std::size_t>(m_end - m_current) - 1;
+        const std::size_t spare = after > m_claimed ? after - m_claimed : 0;
+        const std::size_t reserve = std::min<std::size_t>(tmp, spare / f.bytes_per_item());
+        f(m_user, tmp, reserve, m_stack.back().obj());
         if(tmp == 0) {
             obj = m_stack.back().obj();
             int ret = push_proc(obj, off);
@@ -410,6 +431,9 @@ private:
         else {
             m_stack.back().set_container_type(container_type);
             m_stack.back().set_count(tmp);
+            m_stack.back().set_capacity(reserve);
+            m_stack.back().set_claim(reserve * f.bytes_per_item());
+            m_claimed += reserve * f.bytes_per_item();
             if (m_stack.size() <= m_user.limit().depth()) {
                 m_stack.push_back(unpack_stack());
             }
@@ -422,6 +446,25 @@ private:
         return 0;
     }
 
+    // Doubles the storage of an array or map that outgrew its reservation, never past its declared size.
+    void grow_array(unpack_stack& sp) {
+        msgpack::object& o = sp.obj();
+        const std::size_t cap = std::min<std::size_t>(o.via.array.size + sp.count(), sp.capacity() ? sp.capacity() * 2 : 1);
+        msgpack::object* ptr = static_cast<msgpack::object*>(m_user.zone().allocate_align(cap*sizeof(msgpack::object)));
+        if (o.via.array.size) std::memcpy(static_cast<void*>(ptr), o.via.array.ptr, o.via.array.size*sizeof(msgpack::object));
+        o.via.array.ptr = ptr;
+        sp.set_capacity(cap);
+    }
+
+    void grow_map(unpack_stack& sp) {
+        msgpack::object& o = sp.obj();
+        const std::size_t cap = std::min<std::size_t>(o.via.map.size + sp.count(), sp.capacity() ? sp.capacity() * 2 : 1);
+        msgpack::object_kv* ptr = static_cast<msgpack::object_kv*>(m_user.zone().allocate_align(cap*sizeof(msgpack::object_kv)));
+        if (o.via.map.size) std::memcpy(static_cast<void*>(ptr), o.via.map.ptr, o.via.map.size*sizeof(msgpack::object_kv));
+        o.via.map.ptr = ptr;
+        sp.set_capacity(cap);
+    }
+
     int push_item(msgpack::object& obj) {
         bool finish = false;
         while (!finish) {
@@ -431,6 +474,7 @@ private:
             unpack_stack& sp = *(m_stack.end() - 2);
             switch(sp.container_type()) {
             case MSGPACK_CT_ARRAY_ITEM:
+                if (sp.obj().via.array.size == sp.capacity()) grow_array(sp);
                 unpack_array_item(sp.obj(), obj);
                 if(sp.decr_count() == 0) {
                     obj = sp.obj();
@@ -446,6 +490,7 @@ private:
                 finish = true;
                 break;
             case MSGPACK_CT_MAP_VALUE:
+                if (sp.obj().via.map.size == sp.capacity()) grow_map(sp);
                 unpack_map_item(sp.obj(), sp.map_key(), obj);
                 if(sp.decr_count() == 0) {
                     obj = sp.obj();
@@ -488,6 +533,8 @@ private:
 private:
     char const* m_start;
     char const* m_current;
+    char const* m_end;
+    std::size_t m_claimed;
 
     std::size_t m_trail;
     unpack_user m_user;
@@ -507,6 +554,7 @@ inline int context::execute(const char* data, std::size_t len, std::size_t& off)
     m_start = data;
     m_current = data + off;
     const char* const pe = data + len;
+    m_end = pe;
     const char* n = nullptr;
 
     msgpack::object obj;
@@ -519,6 +567,11 @@ inline int context::execute(const char* data, std::size_t len, std::size_t& off)
     do {
         if (m_cs == MSGPACK_CS_HEADER) {
             fixed_trail_again = false;
+            if (m_stack.size() > 1) {
+                // The item starts: its byte no longer counts in the reservation of its container.
+                unpack_stack& parent = *(m_stack.end() - 2);
+                if (parent.claim()) { parent.decr_claim(); --m_claimed; }
+            }
             int selector = *reinterpret_cast<const unsigned char*>(m_current);
             if (0x00 <= selector && selector <= 0x7f) { // Positive Fixnum
                 unpack_uint8(*reinterpret_cast<const uint8_t*>(m_current), obj);

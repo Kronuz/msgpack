@@ -116,6 +116,13 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 	target_include_directories(msgpack_hunt_test PRIVATE test)
 	add_test(NAME msgpack_hunt COMMAND msgpack_hunt_test)
 
+	# The streaming unpacker and unpack() reserve for a header only what the bytes in hand can hold
+	# (hostile array32/map32/str32/bin32 headers, nested, split across feeds), and read valid documents the
+	# same however the bytes are split.
+	add_executable(msgpack_unpacker_limits_test test/unpacker_limits_test.cc)
+	target_link_libraries(msgpack_unpacker_limits_test PRIVATE msgpack)
+	add_test(NAME msgpack_unpacker_limits COMMAND msgpack_unpacker_limits_test)
+
 	# The value outlives the input buffer, the other values and the threads it came from.
 	find_package(Threads REQUIRED)
 	add_executable(msgpack_lifetime_test test/lifetime_test.cc)
@@ -140,6 +147,18 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 
 	add_executable(msgpack_demo examples/demo.cc)
 	target_link_libraries(msgpack_demo PRIVATE msgpack)
+
+	# A libFuzzer target for the unpacker (clang only): one piece against chunks, and the bytes it asks malloc for.
+	#   cmake -B build-fuzz -DMSGPACK_BUILD_FUZZ=ON -DCMAKE_CXX_COMPILER=clang++ && cmake --build build-fuzz --target msgpack_unpacker_fuzz
+	#   build-fuzz/msgpack_unpacker_fuzz fuzz/corpus/unpacker -max_total_time=300
+	option(MSGPACK_BUILD_FUZZ "Build the libFuzzer target (clang)" OFF)
+	if(MSGPACK_BUILD_FUZZ)
+		add_executable(msgpack_unpacker_fuzz fuzz/unpacker_fuzz.cc)
+		target_compile_options(msgpack_unpacker_fuzz PRIVATE -fsanitize=fuzzer,address,undefined -fno-sanitize-recover=undefined)
+		target_link_options(msgpack_unpacker_fuzz PRIVATE -fsanitize=fuzzer,address,undefined)
+		target_link_libraries(msgpack_unpacker_fuzz PRIVATE msgpack)
+		target_include_directories(msgpack_unpacker_fuzz PRIVATE test)
+	endif()
 
 	# The benchmarks. OFF by default: the comparison libraries below are fetched only when it is ON, by the
 	# benchmark targets alone; the library target and the tests never see them.
