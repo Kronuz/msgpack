@@ -30,16 +30,22 @@ mutants = {
  'claims_never_released': rep('if (parent.claim()) { parent.decr_claim(); --m_claimed; }', ''),
  # a map entry counted as one byte
  'map_entry_one_byte': rep('static std::size_t bytes_per_item() { return 2; }', 'static std::size_t bytes_per_item() { return 1; }'),
- # the grown array loses its items
- 'grow_array_drops_items': rep('if (o.via.array.size) std::memcpy', 'if (false) std::memcpy'),
- 'grow_map_drops_items': rep('if (o.via.map.size) std::memcpy', 'if (false) std::memcpy'),
+ # the grown storage loses its items
+ 'grow_drops_items': rep('if (size) std::memcpy(block->ptr, ptr, size*sizeof(Item));', ''),
  # the storage is not grown: items are written past it
  'no_grow_array': rep('if (sp.obj().via.array.size == sp.capacity()) grow_array(sp);', ''),
  'no_grow_map': rep('if (sp.obj().via.map.size == sp.capacity()) grow_map(sp);', ''),
- # the grown storage is one item too small once the document has more than declared-so-far
- 'grow_by_zero': rep('sp.capacity() ? sp.capacity() * 2 : 1);\n        msgpack::object* ptr', 'sp.capacity());\n        msgpack::object* ptr'),
+ # the grown storage does not grow
+ 'grow_by_zero': rep('sp.capacity() ? sp.capacity() + sp.capacity() / 2 + 1 : 1);', 'sp.capacity());'),
  # the reservation is not recorded: the growth check sees capacity 0 and regrows every item
  'capacity_not_recorded': rep('m_stack.back().set_capacity(reserve);', ''),
+ # every growth starts a block of its own and leaves the last one in the zone
+ 'grown_block_not_reused': rep('grown_block* block = sp.block();', 'grown_block* block = nullptr;'),
+ 'grown_block_not_recorded': rep('sp.set_block(block);', ''),
+ # a container reads the block of the container that was in its stack entry before
+ 'stale_block': rep('m_stack.back().set_block(nullptr);', ''),
+ # the resized storage is dropped
+ 'realloc_result_dropped': rep('block->ptr = grown;', ''),
 }
 only = sys.argv[4:]
 os.makedirs(OUT, exist_ok=True)

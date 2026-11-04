@@ -20,6 +20,8 @@
 #include <algorithm>
 #include <cassert>
 #include <cstring>
+#include <limits>
+#include <new>
 #include <memory>
 #include <stdexcept>
 
@@ -257,6 +259,16 @@ inline void unpack_ext(unpack_user& u, const char* p, std::size_t l, msgpack::ob
 }
 
 
+// Storage of an array or map that outgrew its reservation: malloc'd, resized as it grows, freed with the zone.
+struct grown_block {
+    void* ptr;
+};
+
+inline void free_grown_block(void* block) {
+    ::free(static_cast<grown_block*>(block)->ptr);
+    ::free(block);
+}
+
 class unpack_stack {
 public:
     msgpack::object const& obj() const { return m_obj; }
@@ -276,6 +288,9 @@ public:
     std::size_t claim() const { return m_claim; }
     void set_claim(std::size_t claim) { m_claim = claim; }
     void decr_claim() { --m_claim; }
+    // The storage that outgrew its reservation, if it has moved out of the zone's chunks.
+    grown_block* block() const { return m_block; }
+    void set_block(grown_block* block) { m_block = block; }
 private:
     msgpack::object m_obj;
     std::size_t m_count;
@@ -283,6 +298,7 @@ private:
     msgpack::object m_map_key;
     std::size_t m_capacity = 0;
     std::size_t m_claim = 0;
+    grown_block* m_block = nullptr;
 };
 
 inline void init_count(void* buffer)
@@ -432,6 +448,7 @@ private:
             m_stack.back().set_container_type(container_type);
             m_stack.back().set_count(tmp);
             m_stack.back().set_capacity(reserve);
+            m_stack.back().set_block(nullptr);
             m_stack.back().set_claim(reserve * f.bytes_per_item());
             m_claimed += reserve * f.bytes_per_item();
             if (m_stack.size() <= m_user.limit().depth()) {
@@ -446,23 +463,45 @@ private:
         return 0;
     }
 
-    // Doubles the storage of an array or map that outgrew its reservation, never past its declared size.
+    // Grows the storage of an array or map that outgrew its reservation by half, never past its declared
+    // size. The storage moves into a block of its own (freed with the zone) the first time and is resized
+    // after that: the blocks it outgrew are not left in the zone, whatever the items put in it meanwhile.
+    template <typename Item>
+    Item* grow(unpack_stack& sp, Item* ptr, std::size_t size) {
+        const std::size_t cap = std::min<std::size_t>(size + sp.count(), sp.capacity() ? sp.capacity() + sp.capacity() / 2 + 1 : 1);
+        if (cap > std::numeric_limits<std::size_t>::max() / sizeof(Item)) throw std::bad_alloc();
+        grown_block* block = sp.block();
+        if (!block) {
+            block = static_cast<grown_block*>(::malloc(sizeof(grown_block)));
+            if (!block) throw std::bad_alloc();
+            block->ptr = ::malloc(cap*sizeof(Item));
+            if (!block->ptr) { ::free(block); throw std::bad_alloc(); }
+            try {
+                m_user.zone().push_finalizer(&free_grown_block, block);
+            } catch (...) {
+                ::free(block->ptr);
+                ::free(block);
+                throw;
+            }
+            if (size) std::memcpy(block->ptr, ptr, size*sizeof(Item));
+            sp.set_block(block);
+        } else {
+            void* grown = ::realloc(block->ptr, cap*sizeof(Item));
+            if (!grown) throw std::bad_alloc();
+            block->ptr = grown;
+        }
+        sp.set_capacity(cap);
+        return static_cast<Item*>(block->ptr);
+    }
+
     void grow_array(unpack_stack& sp) {
         msgpack::object& o = sp.obj();
-        const std::size_t cap = std::min<std::size_t>(o.via.array.size + sp.count(), sp.capacity() ? sp.capacity() * 2 : 1);
-        msgpack::object* ptr = static_cast<msgpack::object*>(m_user.zone().allocate_align(cap*sizeof(msgpack::object)));
-        if (o.via.array.size) std::memcpy(static_cast<void*>(ptr), o.via.array.ptr, o.via.array.size*sizeof(msgpack::object));
-        o.via.array.ptr = ptr;
-        sp.set_capacity(cap);
+        o.via.array.ptr = grow(sp, o.via.array.ptr, o.via.array.size);
     }
 
     void grow_map(unpack_stack& sp) {
         msgpack::object& o = sp.obj();
-        const std::size_t cap = std::min<std::size_t>(o.via.map.size + sp.count(), sp.capacity() ? sp.capacity() * 2 : 1);
-        msgpack::object_kv* ptr = static_cast<msgpack::object_kv*>(m_user.zone().allocate_align(cap*sizeof(msgpack::object_kv)));
-        if (o.via.map.size) std::memcpy(static_cast<void*>(ptr), o.via.map.ptr, o.via.map.size*sizeof(msgpack::object_kv));
-        o.via.map.ptr = ptr;
-        sp.set_capacity(cap);
+        o.via.map.ptr = grow(sp, o.via.map.ptr, o.via.map.size);
     }
 
     int push_item(msgpack::object& obj) {

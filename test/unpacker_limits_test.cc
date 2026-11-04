@@ -14,9 +14,9 @@ static int failures = 0;
 #define CHECK(cond) do { if (!(cond)) { std::fprintf(stderr, "%s:%d: CHECK(%s) failed\n", __FILE__, __LINE__, #cond); ++failures; } } while (0)
 
 static constexpr std::size_t slack = 64 * 1024;   // a few zone chunks and the unpacker's buffer
-// What a fed byte may justify, worst case: 24 or 48 bytes of storage per byte, a block the zone rounds up to a
-// power of two (twice), and the blocks an array outgrew that stay in the zone (twice more).
-static constexpr std::size_t per_byte = 8 * sizeof(msgpack::object_kv);
+// What a fed byte may justify, worst case: a 24-byte object, times 2 for the zone's power-of-two chunks, times 2
+// for the growth steps and the alignment of strings.
+static constexpr std::size_t per_byte = 4 * sizeof(msgpack::object);
 
 static Bytes be32(std::uint32_t n) {
 	return Bytes{char(n >> 24), char(n >> 16), char(n >> 8), char(n)};
@@ -267,7 +267,7 @@ static void test_valid_documents_split_every_way() {
 			}
 			CHECK(out.size() == 1);
 			if (out.size() == 1) CHECK(out[0].get() == whole.get());
-			CHECK(g_requested <= slack + per_byte * data.size() * 2);
+			CHECK(g_requested <= slack + per_byte * data.size());
 		}
 	}
 }
@@ -308,6 +308,7 @@ static void test_valid_document_is_stored_without_regrowth() {
 		CHECK(out.size() == 1);
 	}
 	CHECK(g_requested <= exact + exact / 8 + data.size() * 2 + slack);
+	CHECK(g_calls <= exact / 2048 + 30);   // zone chunks only: no array moved out of the zone to grow
 	// Nested to depth 50, each level one item: all counted on, none regrown.
 	Bytes nested;
 	for (int i = 0; i < 50; ++i) nested += '\x91';
@@ -320,11 +321,12 @@ static void test_valid_document_is_stored_without_regrowth() {
 		CHECK(out.size() == 1);
 	}
 	CHECK(g_requested <= 51 * sizeof(msgpack::object) + slack);
+	CHECK(g_calls <= 8);   // the buffer, the zones and their chunks
 }
 
-static void test_large_streamed_array_grows_by_doubling() {
-	// 200000 items declared up front, fed 1 KB at a time: the storage follows the bytes, at most about
-	// twice the items plus the blocks it replaced.
+static void test_large_streamed_array_grows_in_steps() {
+	// 200000 items declared up front, fed 1 KB at a time: the storage follows the bytes and ends at the
+	// items it holds, in one block that is resized as it grows.
 	const std::size_t n = 200000;
 	Bytes data = Bytes("\xdd") + be32(n) + Bytes(n, '\x05');
 	reset_requests();
@@ -339,11 +341,65 @@ static void test_large_streamed_array_grows_by_doubling() {
 		CHECK(out[0].get().via.array.size == n);
 		for (std::size_t i = 0; i < n; i += 997) CHECK(out[0].get().via.array.ptr[i].via.u64 == 5);
 	}
-	CHECK(g_requested <= 4 * n * sizeof(msgpack::object) + 2 * data.size() + slack);
+	CHECK(g_requested <= n * sizeof(msgpack::object) + 2 * data.size() + slack);
 }
 
 // A refused allocation (the hostile header's request) is a failure, not a crash.
 #define RUN(test) do { try { test(); } catch (const std::bad_alloc&) { std::fprintf(stderr, "%s: std::bad_alloc\n", #test); ++failures; } catch (const std::exception& e) { std::fprintf(stderr, "%s: %s\n", #test, e.what()); ++failures; } } while (0)
+
+static void test_streamed_array_with_strings_is_not_retained() {
+	// 100000 one-character strings, the count declared, fed 1 KB at a time. The strings sit in the zone after
+	// the array's storage, which grows meanwhile: the storage it outgrew is not left behind (about 24 + 8
+	// bytes an item, not three times that).
+	const std::size_t n = 100000;
+	Bytes data = Bytes("\xdd") + be32(n);
+	for (std::size_t i = 0; i < n; ++i) data += Bytes("\xa1x");
+	reset_requests();
+	std::vector<msgpack::object_handle> out;
+	{
+		auto u = make_unpacker();
+		for (std::size_t at = 0; at < data.size(); at += 1000) feed(u, data.substr(at, 1000), &out);
+	}
+	CHECK(out.size() == 1);
+	if (out.size() == 1) {
+		CHECK(out[0].get().via.array.size == n);
+		CHECK(out[0].get().via.array.ptr[n - 1].via.str.size == 1);
+	}
+	CHECK(g_requested <= 2 * (sizeof(msgpack::object) + 8) * n + 2 * data.size() + slack);
+}
+
+static void test_a_second_document_does_not_reuse_the_storage_of_the_first() {
+	// The same unpacker reads two arrays that outgrow their reservation, the first one's result released
+	// before the second starts.
+	const std::size_t n = 5000;
+	Bytes data = Bytes("\xdd") + be32(n) + Bytes(n, '\x03');
+	auto u = make_unpacker();
+	for (int round = 0; round < 3; ++round) {
+		std::vector<msgpack::object_handle> out;
+		for (std::size_t at = 0; at < data.size(); at += 100) feed(u, data.substr(at, 100), &out);
+		CHECK(out.size() == 1);
+		if (out.size() == 1) {
+			CHECK(out[0].get().via.array.size == n);
+			CHECK(out[0].get().via.array.ptr[n - 1].via.u64 == 3);
+		}
+	}
+}
+
+static void test_streamed_hostile_items_stay_under_the_bound() {
+	// A header that declares 4 billion items, then cheap items one byte at a time: the storage follows the
+	// bytes, within the bound for one piece. (An array item or half a map entry per byte.)
+	for (const Bytes* header : {&array32_max, &map32_max}) {
+		for (std::size_t total : {std::size_t(2000), std::size_t(8000), std::size_t(33000)}) {
+			Bytes data = *header + Bytes(total, '\xc0');
+			reset_requests();
+			{
+				auto u = make_unpacker();
+				for (char c : data) CHECK(feed(u, Bytes(1, c)) == 0);
+			}
+			CHECK(g_requested <= slack + per_byte * data.size());
+		}
+	}
+}
 
 int main() {
 	RUN(test_hostile_headers_one_chunk);
@@ -357,7 +413,10 @@ int main() {
 	RUN(test_valid_documents_split_every_way);
 	RUN(test_random_split_points);
 	RUN(test_valid_document_is_stored_without_regrowth);
-	RUN(test_large_streamed_array_grows_by_doubling);
+	RUN(test_large_streamed_array_grows_in_steps);
+	RUN(test_streamed_hostile_items_stay_under_the_bound);
+	RUN(test_streamed_array_with_strings_is_not_retained);
+	RUN(test_a_second_document_does_not_reuse_the_storage_of_the_first);
 	if (failures) { std::fprintf(stderr, "%d checks failed\n", failures); return 1; }
 	std::puts("msgpack_unpacker_limits: ok");
 	return 0;

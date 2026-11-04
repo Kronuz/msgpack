@@ -13,9 +13,9 @@ namespace {
 enum class End { Object, Parse, Limit, Incomplete };
 
 constexpr std::size_t slack = 64 * 1024;
-// What a fed byte may justify, worst case: 24 or 48 bytes of storage per byte, a block the zone rounds up to a
-// power of two (twice), and the blocks an array outgrew that stay in the zone (twice more).
-constexpr std::size_t per_byte = 8 * sizeof(msgpack::object_kv);
+// What a fed byte may justify, worst case: a 24-byte object, times 2 for the zone's power-of-two chunks, times 2
+// for the growth steps and the alignment of strings.
+constexpr std::size_t per_byte = 4 * sizeof(msgpack::object);
 
 [[noreturn]] void fail(const char* what) {
 	std::fprintf(stderr, "unpacker_fuzz: %s\n", what);
@@ -96,7 +96,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
 	} catch (...) {
 		end = classify();
 	}
-	if (g_requested > slack + per_byte * len * 2) {
+	if (g_requested > slack + per_byte * len) {
 		std::fprintf(stderr, "unpacker: %zu bytes in, %zu requested, largest %zu\n", len, g_requested, g_largest_request);
 		fail("the unpacker asked for more than its bytes can hold");
 	}
