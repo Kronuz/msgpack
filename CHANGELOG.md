@@ -6,6 +6,23 @@ releases, so entries are dated.
 
 Upgrading a pin from before 2026-10-30: [the consumer upgrade note](https://github.com/Kronuz/cpp-libraries/blob/main/docs/UPGRADING-2026-10.md#msgpack) lists what changes for callers, how to find affected inputs, the commits not to pin, and the speedup.
 
+## 2026-11-03
+
+### Fixed
+
+- The streaming `msgpack::unpacker` and `msgpack::unpack` no longer reserve storage for the count an
+  `array32` or `map32` header declares. A header of 0xffffffff items made five bytes ask the zone for
+  96 GB (206 GB for a map). The parser reserves what the bytes it has can hold (an array item takes a
+  byte, a map entry two) and grows the storage as items arrive; a valid document is stored exactly as
+  before. `unpack_limit` is unchanged. See `docs/mechanisms/unpacker-reservation.md`; the evidence is
+  in `docs/status/unpacker-limits.md`.
+
+### Added
+
+- `msgpack_unpacker_limits` (hostile headers, nested, split across feeds; valid documents read the
+  same however they are split), `tools/unpack_mutants.py` and a libFuzzer target
+  (`-DMSGPACK_BUILD_FUZZ=ON`, `fuzz/unpacker_fuzz.cc`).
+
 ## 2026-11-01
 
 ### Added
