@@ -86,3 +86,36 @@ None.
 ## Not run
 
 32-bit build (SR5 is by reading); TSan (the unpacker is single-threaded per instance); Linux, FreeBSD and arm64; the branch's other ten ctest targets under sanitizers (the ledger reports 11 of 11); the branch's mutant script; Xapiand end to end and a live `RESTORE` over HTTP; long fuzz (150 s only); performance of the reservation path.
+
+## Re-check
+
+Re-checker: sonnet, at msgpack:8ced372 (fixes msgpack:4fa54a7, msgpack:8ced372) and Xapiand `fix/restore-depth-limit` (Xapiand:65971dc6a). Fresh worktree, Homebrew LLVM 23.1.2, `-fsanitize=address,undefined -fno-sanitize-recover=undefined`. The reviewer's probes `p1` to `p6` were rebuilt against the fix; new probes `p7` to `p11` and `mc_inject.h` are kept in `.scratch/sec/` of the `limits` worktree.
+
+### Verdicts
+
+| Finding | Verdict | Evidence |
+| --- | --- | --- |
+| SR1 | CLOSED | `msgpack/unpack.hpp:469` (`grow`), `:267` (`free_grown_block`), `:451` (`set_block(nullptr)`). `p1_amplify`: hostile `array32`/`map32` nil items 35.0 bytes per input byte (was 126.3; one piece 32.0). `p5_streamed_honest`: 23 to 25 at 1 KB and 4 KB feeds (was 62 to 88), 41 to 44 in one piece. `p2_invariants`, 200,000 seeds: worst 32.3 (was 162.7), invariants hold. Live heap, not asked bytes (`p9_live`, ASan's count, 1 MB one byte per feed): 36.0 worst for array and map of nil, 22.0 for 1-char strings. `p6_strings`: 20 to 70 (the 4 KB feed of 1-item arrays is the 70). Revert: the branch test with `msgpack/unpack.hpp` from msgpack:698a518 fails 4 checks (`test_large_streamed_array_grows_in_steps` :344, `test_streamed_hostile_items_stay_under_the_bound` :399 twice, `test_streamed_array_with_strings_is_not_retained` :368). |
+| SR2 | CLOSED | `src/database/handler.cc:988` on `fix/restore-depth-limit` builds the unpacker with `make_msgpack_unpacker()` (`src/database/utils.cc:248`: depth `MAX_JSON_DEPTH` = 200, the limits of the HTTP stream). `p11_restore` replays the `restore_documents` loop (reserve 1024, feed, `next`, copy into `MsgPack`) on `0x91` x 200000 + `0x01`: the default unpacker overflows the stack (ASan stack-overflow, the fixed crash), the limited one throws `depth size overflow` at the first feed. Xapiand itself was not built (see Not run). |
+| SR3 | CLOSED | `test/unpacker_limits_test.cc:19` and `fuzz/unpacker_fuzz.cc:18`: `per_byte = 4 * sizeof(object)` = 96, applied once to chunked and one-piece alike (`slack + per_byte * len`); the `* 2` is gone from both. Measured worst 35 (hostile), 32 (random), 70 (container-heavy) all under it; the revert check above shows it fails at the old 126 shape. The documented figure in the note (96) is the asserted one. |
+| SR4 | CLOSED | stated in `docs/mechanisms/unpacker-reservation.md` (a caller that keeps feeding gets the same error; reservations shrink to zero, slower not larger). |
+| SR5 | CLOSED | `unpack.hpp:472` throws `std::bad_alloc` when `cap * sizeof(Item)` would wrap. By reading; no 32-bit build. |
+
+### The new mechanism
+
+1. **Finalizer order and double free.** The block is registered once, in the zone that is current at the first growth (`:480`), and `free_grown_block` frees `ptr` then the block (`:267`). Finalizers run in reverse registration order and the blocks hold only POD objects, so order does not matter. A stack entry's pointer is reset at every container header (`:451`, mutant `stale_block` dies with a use-after-free), a completed container's entry is popped, and the root entry `m_stack[0]` is reset before reuse (`test_a_second_document_does_not_reuse_the_storage_of_the_first`). No double free found.
+2. **Aliasing under `realloc`.** Items are copied by value into the storage; nothing keeps a pointer to an element (`push_item` copies from `execute`'s local `obj` or from `sp.obj()` in the stack vector, and the parent's `ptr` is the only reference, rewritten at `:499` and `:504` in the same statement as the growth). ASan's `realloc` always moves the block, so a stale pointer is caught. `p7_alias`: 2,500 random nested documents (87.8 MB; array32/array16/fix headers, maps, strings, bin; random feed sizes 1 to 400; handles moved between vectors and read after the unpacker is gone) equal the one-piece parse, no report. With the realloc result dropped (`block->ptr = grown` removed) the same probe dies at once with a heap-buffer-overflow, so it has teeth. The 13 mutants of `tools/unpack_mutants.py` all fail under ASan+UBSan, the control passes.
+3. **Exception safety.** `p8_inject` fails the k-th `malloc`/`realloc` for every k of a nested 13.8 KB document fed in 1, 3, 50 and 13,845 byte pieces (11,388 runs, with the unpacker destroyed after the throw, and with it fed the rest), LeakSanitizer on: no leak, no double free, no use after free. A mutant that skips `::free(block->ptr)` in the `push_finalizer` failure path is caught by the same sweep (46 leaks), so the sweep reaches that path. A failed `realloc` leaves `block->ptr` and the capacity as they were (`:490`).
+4. **Moving the zone.** `release_zone()` runs only when a document completes, when every container is done; the finalizer array moves with the zone (`finalizer_array` move constructor). `msgpack_lifetime` and `msgpack_growth` pass.
+5. **Branch tests, fuzz.** All 11 ctest targets pass under ASan+UBSan; `msgpack_unpacker_fuzz` 150 s on the branch corpus (552,438 runs, host busy), no finding.
+
+### New findings
+
+None blocking. Two informational:
+
+1. **N1 (informational): the stack entry grew to 88 bytes.** `unpack_stack` gained `m_block` (80 to 88); `p3_nesting` on 1 MB of `0x91` shows 92.3 bytes per input byte for the stack (the note says 84). It only matters for depth-unlimited callers (SR2). The note's "84 measured" is for the 80-byte entry.
+2. **N2 (informational): the counted bytes leave out malloc's per-block overhead for tiny grown containers.** Each container that outgrows its reservation costs an 8-byte `grown_block` (a 32-byte chunk in glibc), a block, and a 16-byte finalizer. Measured with the allocator's own in-use count and `maxrss` (`p10_small`, 3 million containers, header the last byte of a feed): `[0x91 c0]` 52.0 against 47.8 on msgpack:698a518, `[0x81 c0 c0]` 40.0 against 39.0, `[0x92 c0 c0]` 40.0 against 47.5 bytes per input byte. Not worse than before and under 96; macOS only, glibc could count more.
+
+### Not run
+
+Xapiand build and `harness/cli_roundtrip_check.sh` (SR2 is read plus the `p11` replay of the loop with the library); Linux, FreeBSD, arm64 and a libstdc++ build of msgpack:8ced372's `test/malloc_count.h`; a 32-bit build (SR5); TSan; performance of the grow path (no benchmark); fuzz longer than 150 s.
