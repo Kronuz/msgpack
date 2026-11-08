@@ -53,3 +53,9 @@ ctest --test-dir build
 For Xapiand integration, configure Xapiand with `-DFETCHCONTENT_SOURCE_DIR_MSGPACK=/path/to/msgpack` and define `MSGPACK_EXCEPTION_HEADER` to Xapiand's `src/exception.h`.
 
 Xapiand also defines `XAPIAN_LIB_BUILD=1` explicitly now. The old in-tree `msgpack.h` pulled in generated `config.h`, which incidentally made Xapian's internal `DB_ACTION_MASK_` visible before some Xapian headers were included. The standalone header deliberately does not include `config.h`, so the host owns that define.
+
+## Bounded target
+
+`msgpack/bounded.hpp` contains the flat lexical decoder, fixed scratch and the append-to-write packer adapter. `msgpack::bounded` configures before DOM dependency population. `MSGPACK_BUILD_DOM` defaults to ON; OFF must fetch none of the DOM dependencies. `test/bounded.cc`, `test/bounded_vectors.py` and `examples/bounded.cc` cover this target. String-view overloads on the adapter reuse the existing header/body encoders; keep the bundled `msgpack/pack.hpp` unchanged.
+
+Keep schema, nesting and aggregate validation in the application. Decoder `finish()` checks partial tokens only. Preserve allocator state across token emission, fence malformed or failed decoding, and keep fixed scratch free of allocation and unused-prefix copies. The bounded target uses standard exceptions and must not pull in `exception.h`; the existing parser and DOM exception hierarchy remains unchanged.
