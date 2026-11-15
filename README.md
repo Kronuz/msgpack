@@ -175,6 +175,8 @@ machines, every operation, and where the time goes.
 
 ## 📚 Documentation
 
+- [Who Owns the Tree](https://kronuz.github.io/blog/msgpack/):
+  the Familiars post on why it exists and how it works.
 - [ARCHITECTURE.md](ARCHITECTURE.md): the value type, the bundled msgpack-c fork,
   the adaptors, and the dependencies.
 - [docs/perf/](docs/perf/survey-2026-10.md): the benchmark method and the full
