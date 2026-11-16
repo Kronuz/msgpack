@@ -1,4 +1,4 @@
-// Allocation counts of unserialise, hash() and to_string() against the frozen implementation.
+// Allocation counts of unserialize, hash() and to_string() against the frozen implementation.
 //
 // The counts are deterministic, unlike a timing, and they are where the cost was: an unpacker
 // zone copied into a second zone, a Body per node and an 8 KB buffer per leaf for hash(), and a
@@ -92,28 +92,28 @@ static std::string record_wire() {
 		{ "note", "short" }, { "none", nullptr }, { "ratio", 3 }, { "level", 7 }, { "kind", "x" },
 		{ "flags", { 1, 2, 3, 4, 5, 6, 7, 8 } }, { "owner", "someone@example.com" }, { "rank", -5 },
 	};
-	return doc.serialise();
+	return doc.serialize();
 }
 
 
 int main() {
 	const std::string wire = record_wire();
 
-	{ MsgPackOld warm = MsgPackOld::unserialise(wire); MsgPack warm2 = MsgPack::unserialise(wire); }
+	{ MsgPackOld warm = MsgPackOld::unserialize(wire); MsgPack warm2 = MsgPack::unserialize(wire); }
 
-	// unserialise: one zone, not two: the second zone is an operator new and an 8 KB chunk
-	std::size_t old_read = count([&] { MsgPackOld v = MsgPackOld::unserialise(wire); });
-	std::size_t new_read = count([&] { MsgPack v = MsgPack::unserialise(wire); });
-	std::printf("unserialise: %zu allocations, was %zu\n", new_read, old_read);
+	// unserialize: one zone, not two: the second zone is an operator new and an 8 KB chunk
+	std::size_t old_read = count([&] { MsgPackOld v = MsgPackOld::unserialize(wire); });
+	std::size_t new_read = count([&] { MsgPack v = MsgPack::unserialize(wire); });
+	std::printf("unserialize: %zu allocations, was %zu\n", new_read, old_read);
 	CHECK(new_read + 2 == old_read);
 	CHECK(new_read <= 5);
 
-	MsgPackOld old_doc = MsgPackOld::unserialise(wire);
-	MsgPack new_doc = MsgPack::unserialise(wire);
+	MsgPackOld old_doc = MsgPackOld::unserialize(wire);
+	MsgPack new_doc = MsgPack::unserialize(wire);
 
 	// hash(): none when every key is a string, no key repeats and no value packs to more than 256 bytes
-	std::size_t old_hash = count([&] { MsgPackOld v = MsgPackOld::unserialise(wire); v.hash(); }) - old_read;
-	std::size_t new_hash = count([&] { MsgPack v = MsgPack::unserialise(wire); v.hash(); }) - new_read;
+	std::size_t old_hash = count([&] { MsgPackOld v = MsgPackOld::unserialize(wire); v.hash(); }) - old_read;
+	std::size_t new_hash = count([&] { MsgPack v = MsgPack::unserialize(wire); v.hash(); }) - new_read;
 	std::printf("hash: %zu allocations, was %zu\n", new_hash, old_hash);
 	CHECK(old_hash > 20);
 	CHECK(new_hash == 0);

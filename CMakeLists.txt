@@ -15,7 +15,7 @@ FetchContent_Declare(enum_reflection  GIT_REPOSITORY https://github.com/Kronuz/e
 FetchContent_Declare(strict_stox      GIT_REPOSITORY https://github.com/Kronuz/strict-stox.git         GIT_TAG 1f9190ca19bbb5291456c54f3ff34982e0083113)
 FetchContent_Declare(located_exception GIT_REPOSITORY https://github.com/Kronuz/located-exception.git  GIT_TAG 0c7e5df8b367dd09c7137d711544789f9451dd0b)
 FetchContent_Declare(constexpr_phf    GIT_REPOSITORY https://github.com/Kronuz/constexpr-phf.git       GIT_TAG 1d82461008c897ab004652d5c43e60ccfa7012cb)
-FetchContent_Declare(hashes           GIT_REPOSITORY https://github.com/Kronuz/hashes.git              GIT_TAG e3bf5b6167775f26dd14f89f210f687b0253241b)
+FetchContent_Declare(hashes           GIT_REPOSITORY https://github.com/Kronuz/hashes.git              GIT_TAG 423c8cc1da989cfa9692250567911d288b49092e)
 FetchContent_Declare(repr             GIT_REPOSITORY https://github.com/Kronuz/repr.git                GIT_TAG 87450b43c6ff113a321e06d811d9b7a4857c9351)
 FetchContent_MakeAvailable(
 	atomic_shared_ptr
@@ -63,7 +63,7 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 	target_link_libraries(msgpack_test PRIVATE msgpack)
 	add_test(NAME msgpack COMMAND msgpack_test)
 
-	# Every result of unserialise, hash(), to_string() and the operations around them against the
+	# Every result of unserialize, hash(), to_string() and the operations around them against the
 	# frozen implementation in test/frozen_msgpack.h (class MsgPackOld), on random documents.
 	add_executable(msgpack_diff_test test/diff_test.cc)
 	target_link_libraries(msgpack_diff_test PRIVATE msgpack)

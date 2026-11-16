@@ -70,7 +70,7 @@ inline std::string array_head(std::size_t n) {
 	return r;
 }
 
-// The bytes `MsgPack::serialise()` gives for `o` once every map in it has been filled: every
+// The bytes `MsgPack::serialize()` gives for `o` once every map in it has been filled: every
 // map reduced to unique keys, in the order of their first occurrence, with the last value.
 inline void pack_merged(msgpack::packer<msgpack::sbuffer>& pk, const msgpack::object& o) {
 	switch (o.type) {

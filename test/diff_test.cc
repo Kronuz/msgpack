@@ -2,8 +2,8 @@
 // (test/frozen_msgpack.h, class MsgPackOld).
 //
 // Both types read the same random documents and run the same random sequence of operations;
-// every result and every exception must be equal: unserialise (value and offset), hash(),
-// serialise(), to_string() with and without indent, copies, moves, walks, mutations after unserialise
+// every result and every exception must be equal: unserialize (value and offset), hash(),
+// serialize(), to_string() with and without indent, copies, moves, walks, mutations after unserialize
 // and lock(). The text of a document that holds NaN or Inf is the one thing that differs by design:
 // the frozen implementation stops at the number, the current one writes null (see compare_logs).
 // Documents hold every msgpack type in every width, big integers, NaN and -0.0, empty
@@ -415,7 +415,7 @@ std::string hex(const std::string& s) {
 
 
 enum Op {
-	HASH, SERIALISE, JSON, JSON_INDENT, COPY, COPY_MUTATE, WALK, MUTATE, ERASE, MOVE, ROUNDTRIP, SIZE, N_OPS
+	HASH, SERIALIZE, JSON, JSON_INDENT, COPY, COPY_MUTATE, WALK, MUTATE, ERASE, MOVE, ROUNDTRIP, SIZE, N_OPS
 };
 
 struct Step {
@@ -435,7 +435,7 @@ void walk(M& m, std::string& out, int depth) {
 	if (m.is_map()) {
 		out += '{';
 		for (auto it = m.begin(); it != m.end(); ++it) {
-			out += hex(it->serialise());
+			out += hex(it->serialize());
 			out += ':';
 			walk(it.value(), out, depth + 1);
 			out += ',';
@@ -449,7 +449,7 @@ void walk(M& m, std::string& out, int depth) {
 		}
 		out += ']';
 	} else {
-		out += hex(m.serialise());
+		out += hex(m.serialize());
 	}
 }
 
@@ -581,12 +581,12 @@ std::vector<std::string> run(const std::string& bytes, const Doc& doc, const std
 	};
 
 	std::size_t off = 0;
-	std::unique_ptr<M> root;   // the value as unserialise returns it, not assigned into another
+	std::unique_ptr<M> root;   // the value as unserialize returns it, not assigned into another
 	try {
-		root.reset(new M(M::unserialise(bytes.data(), bytes.size(), off)));
-		log.push_back(merged_input ? std::string("unserialise") : "unserialise off " + std::to_string(off));
+		root.reset(new M(M::unserialize(bytes.data(), bytes.size(), off)));
+		log.push_back(merged_input ? std::string("unserialize") : "unserialize off " + std::to_string(off));
 	} catch (...) {
-		log.push_back("unserialise threw " + current_exception_text() + (merged_input ? std::string() : " off " + std::to_string(off)));
+		log.push_back("unserialize threw " + current_exception_text() + (merged_input ? std::string() : " off " + std::to_string(off)));
 		return log;
 	}
 	M& cur = *root;
@@ -597,8 +597,8 @@ std::vector<std::string> run(const std::string& bytes, const Doc& doc, const std
 			case HASH:
 				step("hash", [&] { return std::to_string(cur.hash()); });
 				break;
-			case SERIALISE:
-				step("serialise", [&] { return hex(cur.serialise()); });
+			case SERIALIZE:
+				step("serialize", [&] { return hex(cur.serialize()); });
 				break;
 			case JSON:
 				if (!doc.non_string_key) step("json", [&] { return cur.to_string(); });
@@ -609,7 +609,7 @@ std::vector<std::string> run(const std::string& bytes, const Doc& doc, const std
 			case COPY:
 				step("copy", [&] {
 					M c(cur);
-					std::string r = hex(c.serialise());
+					std::string r = hex(c.serialize());
 					r += " " + std::to_string(c.hash());
 					return r;
 				});
@@ -618,14 +618,14 @@ std::vector<std::string> run(const std::string& bytes, const Doc& doc, const std
 				if (mode.copy_mutate) step("copy mutate", [&] {
 					M c(cur);
 					mutate(c, s.arg);
-					return hex(c.serialise()) + " | " + hex(cur.serialise());
+					return hex(c.serialize()) + " | " + hex(cur.serialize());
 				});
 				break;
 			case WALK:
 				step("walk", [&] { std::string r; walk(cur, r, 0); return r; });
 				break;
 			case MUTATE:
-				if (mode.mutate) step("mutate", [&] { mutate(cur, s.arg); return hex(cur.serialise()); });
+				if (mode.mutate) step("mutate", [&] { mutate(cur, s.arg); return hex(cur.serialize()); });
 				break;
 			case ERASE:
 				// What erase() returns is not compared: the frozen implementation returns 0 for the last
@@ -635,12 +635,12 @@ std::vector<std::string> run(const std::string& bytes, const Doc& doc, const std
 					if (cur.is_map()) {
 						const std::size_t before = cur.size();
 						cur.erase(std::string_view("a"));
-						return std::to_string(before - cur.size()) + " " + hex(cur.serialise());
+						return std::to_string(before - cur.size()) + " " + hex(cur.serialize());
 					}
 					if (cur.is_array()) {
 						const std::size_t before = cur.size();
 						cur.erase(static_cast<std::size_t>(0));
-						return std::to_string(before - cur.size()) + " " + hex(cur.serialise());
+						return std::to_string(before - cur.size()) + " " + hex(cur.serialize());
 					}
 					return std::string("scalar");
 				});
@@ -649,19 +649,19 @@ std::vector<std::string> run(const std::string& bytes, const Doc& doc, const std
 				step("move", [&] {
 					M t(std::move(cur));
 					cur = std::move(t);
-					return hex(cur.serialise());
+					return hex(cur.serialize());
 				});
 				break;
 			case ROUNDTRIP:
 				step("roundtrip", [&] {
-					std::string wire = cur.serialise();
+					std::string wire = cur.serialize();
 					std::string padded = wire + "\xc1junk";
 					std::size_t o = 0;
-					M u = M::unserialise(padded.data(), padded.size(), o);
-					std::string r = std::to_string(o) + " " + hex(u.serialise()) + " " + std::to_string(u.hash());
+					M u = M::unserialize(padded.data(), padded.size(), o);
+					std::string r = std::to_string(o) + " " + hex(u.serialize()) + " " + std::to_string(u.hash());
 					std::size_t o2 = 0;
-					M v = M::unserialise(std::string_view(wire), o2);
-					r += " " + std::to_string(o2) + " " + hex(v.serialise());
+					M v = M::unserialize(std::string_view(wire), o2);
+					r += " " + std::to_string(o2) + " " + hex(v.serialize());
 					return r;
 				});
 				break;
@@ -676,7 +676,7 @@ std::vector<std::string> run(const std::string& bytes, const Doc& doc, const std
 	if (lock_at_end) {
 		step("lock", [&] { cur.lock(); return std::to_string(cur.locked()); });
 		step("hash locked", [&] { return std::to_string(cur.hash()); });
-		step("serialise locked", [&] { return hex(cur.serialise()); });
+		step("serialize locked", [&] { return hex(cur.serialize()); });
 		if (!doc.non_string_key) step("json locked", [&] { return cur.to_string(); });
 	}
 	return log;
@@ -751,7 +751,7 @@ void check_document(std::uint64_t seed, const Doc& doc, Rng& r) {
 	// Plain runs of the operations that are most sensitive to order: the first thing done to a
 	// document decides whether hash() or a walk fills (and merges) the maps first.
 	static const Op orders[][3] = {
-		{ HASH, SERIALISE, COPY }, { SERIALISE, HASH, JSON }, { WALK, HASH, SERIALISE }, { JSON, COPY, HASH },
+		{ HASH, SERIALIZE, COPY }, { SERIALIZE, HASH, JSON }, { WALK, HASH, SERIALIZE }, { JSON, COPY, HASH },
 	};
 	const bool lock_at_end = r.chance(1, 8);
 	if (shape.repeats && shape.non_string) {
@@ -802,7 +802,7 @@ void check_document(std::uint64_t seed, const Doc& doc, Rng& r) {
 		msgpack::object_handle h = msgpack::unpack(doc.bytes.data(), doc.bytes.size(), off);
 		if (shape.non_string) return;
 		if (merge) ++stats.with_repeats;
-		MsgPack m = MsgPack::unserialise(doc.bytes);
+		MsgPack m = MsgPack::unserialize(doc.bytes);
 		std::size_t expected = merge ? model::hash_merged_maps(h.get()) : oracle_hash(h.get());
 		if (m.hash() != expected) {
 			std::fprintf(stderr, "hash oracle: seed %" PRIu64 " doc %s: got %zu, expected %zu\n", seed, hex(doc.bytes).c_str(), m.hash(), expected);
@@ -822,14 +822,14 @@ void check_prefixes(std::uint64_t seed, const Doc& doc) {
 		std::string a, b;
 		std::size_t oa = 0, ob = 0;
 		try {
-			MsgPackOld m = MsgPackOld::unserialise(data, len, oa);
-			a = "ok " + std::to_string(oa) + " " + hex(m.serialise());
+			MsgPackOld m = MsgPackOld::unserialize(data, len, oa);
+			a = "ok " + std::to_string(oa) + " " + hex(m.serialize());
 		} catch (...) {
 			a = "threw " + current_exception_text() + " " + std::to_string(oa);
 		}
 		try {
-			MsgPack m = MsgPack::unserialise(data, len, ob);
-			b = "ok " + std::to_string(ob) + " " + hex(m.serialise());
+			MsgPack m = MsgPack::unserialize(data, len, ob);
+			b = "ok " + std::to_string(ob) + " " + hex(m.serialize());
 		} catch (...) {
 			b = "threw " + current_exception_text() + " " + std::to_string(ob);
 		}

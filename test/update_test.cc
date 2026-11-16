@@ -54,7 +54,7 @@ const char* const outcome_names[] = {"no throw", "bad key", "not iterable"};
 
 // The bytes of an undefined value: what a MsgPack writes for it.
 const std::string& undef_bytes() {
-	static const std::string b = MsgPack::undefined().serialise();
+	static const std::string b = MsgPack::undefined().serialize();
 	return b;
 }
 
@@ -168,8 +168,8 @@ void check(const Doc& t, const Doc& s, const std::string& label) {
 	const Outcome want = merge(expected, s);
 	for (int variant = 0; variant < 4; ++variant) {
 		const std::string where = label + " variant " + std::to_string(variant) + " T=" + hex(t.bytes()) + " S=" + hex(s.bytes());
-		MsgPack mt = MsgPack::unserialise(t.bytes());
-		MsgPack ms = MsgPack::unserialise(s.bytes());
+		MsgPack mt = MsgPack::unserialize(t.bytes());
+		MsgPack ms = MsgPack::unserialize(s.bytes());
 		if (variant & 1) read_all(mt, t, where + " (reading T)");
 		if (variant & 2) read_all(ms, s, where + " (reading S)");
 		Outcome got = OK;
@@ -185,8 +185,8 @@ void check(const Doc& t, const Doc& s, const std::string& label) {
 		}
 		if (got != want) fail("update() outcome: " + where, outcome_names[got], outcome_names[want]);
 		const Doc& result = want == OK ? expected : t;
-		if (mt.serialise() != result.bytes()) fail("T after update() (" + std::string(outcome_names[want]) + "): " + where, hex(mt.serialise()), hex(result.bytes()));
-		if (ms.serialise() != s.bytes()) fail("S after update(): " + where, hex(ms.serialise()), hex(s.bytes()));
+		if (mt.serialize() != result.bytes()) fail("T after update() (" + std::string(outcome_names[want]) + "): " + where, hex(mt.serialize()), hex(result.bytes()));
+		if (ms.serialize() != s.bytes()) fail("S after update(): " + where, hex(ms.serialize()), hex(s.bytes()));
 		// and what is left reads as the model says, and takes another update
 		read_all(mt, result, where + " (after)");
 		if (result.kind == Doc::MAP) {
@@ -195,12 +195,12 @@ void check(const Doc& t, const Doc& s, const std::string& label) {
 			const Outcome o2 = merge(again, zz);
 			Outcome g2 = OK;
 			try {
-				mt.update(MsgPack::unserialise(zz.bytes()));
+				mt.update(MsgPack::unserialize(zz.bytes()));
 			} catch (const BaseException& e) {
 				g2 = classify(e, where);
 			}
 			if (g2 != o2) fail("a second update(): " + where, outcome_names[g2], outcome_names[o2]);
-			if (mt.serialise() != (o2 == OK ? again : result).bytes()) fail("T after a second update(): " + where, hex(mt.serialise()), hex((o2 == OK ? again : result).bytes()));
+			if (mt.serialize() != (o2 == OK ? again : result).bytes()) fail("T after a second update(): " + where, hex(mt.serialize()), hex((o2 == OK ? again : result).bytes()));
 		}
 	}
 	++g_cases;
@@ -280,13 +280,13 @@ Doc rand_doc(Rng& r, int depth, bool in_s) {
 int main(int argc, char** argv) {
 	std::size_t random_cases = 3000;
 	if (argc > 1) random_cases = static_cast<std::size_t>(std::strtoull(argv[1], nullptr, 10));
-	if (!MsgPack::unserialise(undef_bytes()).is_undefined()) fail("the bytes of an undefined value", "defined", "undefined");
+	if (!MsgPack::unserialize(undef_bytes()).is_undefined()) fail("the bytes of an undefined value", "defined", "undefined");
 
 	// the constant undefined value cannot be changed, whatever the source is (the error is the constant's)
 	for (const Doc& source : {map_of({{"a", num(1)}}), bad(0), num(3), Doc::map()}) {
 		bool threw = false;
 		try {
-			MsgPack::undefined().update(MsgPack::unserialise(source.bytes()));
+			MsgPack::undefined().update(MsgPack::unserialize(source.bytes()));
 		} catch (const BaseException& e) {
 			threw = std::string(e.get_message()).find("Constant object") != std::string::npos;
 		}

@@ -35,7 +35,7 @@ Probe `.scratch/sec/p3_nesting.cc`: 1,000,000 bytes of `0x91` into a default `ms
 
 Xapiand's HTTP stream (`make_msgpack_unpacker`, `MAX_JSON_DEPTH` 200) and `msgpack_load` pass a depth limit, so the network path is covered. Two paths do not:
 1. `DatabaseHandler::restore_documents` (`src/database/handler.cc:988`, Xapiand `d372d44d4`) builds `msgpack::unpacker unpacker;` with default limits and reads stdin (`--restore`). The attacker is whoever controls the file the operator restores. It then copies each object into a `MsgPack` (recursive).
-2. `MsgPack::unserialise` (`msgpack.h:675`) calls `msgpack::unpack(*_zone, data, len, off)` with default limits. Used on stored data, so trusted; the bound on the reservation holds there too.
+2. `MsgPack::unserialize` (`msgpack.h:675`) calls `msgpack::unpack(*_zone, data, len, off)` with default limits. Used on stored data, so trusted; the bound on the reservation holds there too.
 
 Fix on the Xapiand side (pass `msgpack_limits()` in `restore_documents`). A library-side default depth would narrow behavior and is the owner's call; I do not ask for it.
 
@@ -65,7 +65,7 @@ When `unpack_array` throws, or the depth limit throws after `m_claimed += ...` i
 | `grow_*` arithmetic | read: `cap = min(size + count, max(1, 2 * capacity))`; `count >= 1` so `cap >= size + 1`; never exceeds the declared `n`; memcpy of `size` items from the old block | holds |
 | Zone rounding | read `allocate_expand` (chunk size doubles from 8 KB until it fits; the previous chunk's remainder is abandoned) | up to 2x per block; included in the 126 figure |
 | `str32`/`bin32`/`ext32` | `p4_payload.cc`: 2 GB and 4 GB-2 headers with 1 MB of payload fed in 4 KB pieces | zero zone allocation until the payload is complete; `ext32` 0xffffffff on 64-bit awaits 4 GB and allocates nothing; per-type limits fire before any reservation |
-| `unpack()`, `MsgPack::unserialise`, `msgpack_load` bypass | read: all call `detail::unpack_imp` -> `context::execute`; `object.hpp` and the adaptors copy already-parsed objects whose sizes are real; `rapidjson.hpp` allocates from JSON sizes already parsed | no bypass of the bound |
+| `unpack()`, `MsgPack::unserialize`, `msgpack_load` bypass | read: all call `detail::unpack_imp` -> `context::execute`; `object.hpp` and the adaptors copy already-parsed objects whose sizes are real; `rapidjson.hpp` allocates from JSON sizes already parsed | no bypass of the bound |
 | `unpack_limit` order | `p4_payload.cc`: limit 100 vs header 1000 | `array_size_overflow` thrown, no allocation |
 | Fuzz | branch target `msgpack_unpacker_fuzz` (ASan+UBSan, libFuzzer, seeded with `fuzz/corpus/unpacker`), 150 s | 1,330,081 runs, no finding, 667 coverage points |
 | Branch tests | `msgpack_unpacker_limits_test` under ASan+UBSan | ok |

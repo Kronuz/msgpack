@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Mutation and revert checks for unserialise, hash(), to_string(), the merge of repeated keys, the growth of
+"""Mutation and revert checks for unserialize, hash(), to_string(), the merge of repeated keys, the growth of
 arrays, the fill of a map that has a key that is not a string, replace() over a value that was read, lock(), the JSON
 text of a key that is not a string and of a float that is not finite, and update().
 Each mutant edits one thing in msgpack.h and
 must make a named test fail (a nonzero exit, a crash or a timeout); a control with no edit must pass. A revert
-of unserialise, hash() or to_string() puts the previous implementation of one of the three back and must fail
+of unserialize, hash() or to_string() puts the previous implementation of one of the three back and must fail
 the allocation test; revert_merge, revert_growth, revert_failed_fill, revert_replace and revert_lock undo the fixes.
 
 usage: tools/mutants.py REPO DEPS_DIR OUT_DIR [NAME...]
@@ -41,7 +41,7 @@ def previous(path):
 
 mutants = {
  'control': ('diff', lambda s: s),
- 'revert_unserialise': ('alloc', rep('std::make_shared<Body>(Body::unpack_tag{}, data, len, off)', 'std::make_shared<Body>(msgpack::unpack(data, len, off).get())')),
+ 'revert_unserialize': ('alloc', rep('std::make_shared<Body>(Body::unpack_tag{}, data, len, off)', 'std::make_shared<Body>(msgpack::unpack(data, len, off).get())')),
  'revert_hash': ('alloc', rep('if (msgpack_wrapper::hash_map(*_body->_obj, tree_hash)) {', 'if (false) {')),
  'revert_to_string': ('alloc', rep('msgpack_wrapper::accept(*_const_body->_obj, writer);', 'as_document().Accept(writer);', 2)),
  'revert_all': ('alloc', lambda s: previous('msgpack.h')),
@@ -57,9 +57,9 @@ mutants = {
  'json_no_end_object': ('diff', rep('return handler.EndObject(o.via.map.size);', 'return true;')),
  'json_continues_after_false': ('diff', rep('if (!accept(*p, handler)) {\n\t\t\t\t\t\treturn false;\n\t\t\t\t\t}', 'accept(*p, handler);')),
  'json_int_as_uint': ('diff', rep('return handler.Int64(o.via.i64);', 'return handler.Uint64(static_cast<uint64_t>(o.via.i64));')),
- 'unserialise_references_input': ('lifetime', rep('msgpack::unpack(*_zone, data, len, off)', 'msgpack::unpack(*_zone, data, len, off, [](msgpack::type::object_type, std::size_t, void*) { return true; })')),
- 'unserialise_off_not_advanced': ('lifetime', rep('msgpack::unpack(*_zone, data, len, off)', 'msgpack::unpack(*_zone, data, len, *std::make_shared<std::size_t>(off))')),
- 'unserialise_dead_zone': ('lifetime', rep('_base(std::make_shared<msgpack::object>(msgpack::unpack(*_zone, data, len, off)))', '_base(std::make_shared<msgpack::object>(msgpack::unpack(*std::make_unique<msgpack::zone>(), data, len, off)))')),
+ 'unserialize_references_input': ('lifetime', rep('msgpack::unpack(*_zone, data, len, off)', 'msgpack::unpack(*_zone, data, len, off, [](msgpack::type::object_type, std::size_t, void*) { return true; })')),
+ 'unserialize_off_not_advanced': ('lifetime', rep('msgpack::unpack(*_zone, data, len, off)', 'msgpack::unpack(*_zone, data, len, *std::make_shared<std::size_t>(off))')),
+ 'unserialize_dead_zone': ('lifetime', rep('_base(std::make_shared<msgpack::object>(msgpack::unpack(*_zone, data, len, off)))', '_base(std::make_shared<msgpack::object>(msgpack::unpack(*std::make_unique<msgpack::zone>(), data, len, off)))')),
  # the merge of a repeated key (last value wins, in the position of the first)
  'revert_merge': ('merge', lambda s: rep('--p;  // the entry that moved into this position is next', '')(rep('*q = *(q + 1);', '*q = *(p + 1);')(s))),
  'merge_shifts_from_p': ('merge', rep('*q = *(q + 1);', '*q = *(p + 1);')),

@@ -91,15 +91,15 @@ std::size_t g_documents = 0, g_with_odd_keys = 0;
 
 void check_document(const std::string& bytes, const std::string& context) {
 	const std::string where = context + " " + hex(bytes);
-	MsgPack m = MsgPack::unserialise(bytes);
-	const std::string before = hex(m.serialise());   // (a float32 is written back as a float64)
+	MsgPack m = MsgPack::unserialize(bytes);
+	const std::string before = hex(m.serialize());   // (a float32 is written back as a float64)
 	const std::string compact = model::reference_json(bytes);
 	const std::string pretty = model::reference_json(bytes, 2);
 	const std::string pretty0 = model::reference_json(bytes, 0);
 	CHECK_SAME("to_string() " + where, m.to_string(), compact);
 	CHECK_SAME("to_string(2) " + where, m.to_string(2), pretty);
 	CHECK_SAME("to_string(0) " + where, m.to_string(0), pretty0);
-	CHECK_SAME("the document after to_string() " + where, hex(m.serialise()), before);
+	CHECK_SAME("the document after to_string() " + where, hex(m.serialize()), before);
 
 	// as_document(), written back as text: it keeps the number, and a writer that writes NaN and Inf writes
 	// them as the names (to_string() writes null, which is JSON)
@@ -142,7 +142,7 @@ void check_document(const std::string& bytes, const std::string& context) {
 		}
 		if (!threw) fail("a read of a map with a key that is not a string " + where, "no throw", "throws");
 		CHECK_SAME("after a failed read " + where, m.to_string(), compact);
-		CHECK_SAME("the document after a failed read " + where, hex(m.serialise()), before);
+		CHECK_SAME("the document after a failed read " + where, hex(m.serialize()), before);
 	}
 	++g_documents;
 }
@@ -233,7 +233,7 @@ void test_hand_written() {
 		{model::map_head(1) + model::map_head(1) + model::str_bytes("k") + raw_double(-inf) + "\x01", "{\"{\\\"k\\\":null}\":1}"},
 	};
 	for (const auto& e : exact) {
-		MsgPack m = MsgPack::unserialise(e.bytes);
+		MsgPack m = MsgPack::unserialize(e.bytes);
 		CHECK_SAME("exact text " + hex(e.bytes), m.to_string(), e.text);
 		check_document(e.bytes, "exact");
 	}

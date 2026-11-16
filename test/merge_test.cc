@@ -149,18 +149,18 @@ void test_cases() {
 		{ "repeat under an array", array_head(2) + map_of({ { "k", one }, { "k", two }, { "m", three } }) + map_of({ { "n", one }, { "n", two }, { "o", three } }), "[{\"k\":2,\"m\":3},{\"n\":2,\"o\":3}]" },
 	};
 	for (const auto& c : cases) {
-		MsgPack m = MsgPack::unserialise(c.wire);
+		MsgPack m = MsgPack::unserialize(c.wire);
 		fill_all(m);
 		CHECK_EQ(m.to_string(), std::string(c.expected_json), c.name);
-		CHECK_EQ(m.serialise(), model::merged(c.wire), c.name);
+		CHECK_EQ(m.serialize(), model::merged(c.wire), c.name);
 		// the copy, the round trip and the hash see the merged document
-		CHECK_EQ(MsgPack(m).serialise(), model::merged(c.wire), c.name);
-		CHECK_EQ(MsgPack::unserialise(m.serialise()).to_string(), std::string(c.expected_json), c.name);
+		CHECK_EQ(MsgPack(m).serialize(), model::merged(c.wire), c.name);
+		CHECK_EQ(MsgPack::unserialize(m.serialize()).to_string(), std::string(c.expected_json), c.name);
 	}
 
 	// Looking up a key after the merge finds the last value, and every key is found.
 	{
-		MsgPack m = MsgPack::unserialise(map_of({ { "a", one }, { "a", two }, { "b", three }, { "c", four } }));
+		MsgPack m = MsgPack::unserialize(map_of({ { "a", one }, { "a", two }, { "b", three }, { "c", four } }));
 		CHECK(m["a"].as_u64() == 2);
 		CHECK(m.size() == 3);
 		CHECK(m["b"].as_u64() == 3);
@@ -173,36 +173,36 @@ void test_cases() {
 	{
 		const std::string wire = map_of({ { "a", one }, { "a", two }, { "b", three }, { "c", four } });
 		{
-			MsgPack m = MsgPack::unserialise(wire);
+			MsgPack m = MsgPack::unserialize(wire);
 			m.erase("a");
-			CHECK_EQ(m.serialise(), map_of({ { "b", three }, { "c", four } }), "erase first");
+			CHECK_EQ(m.serialize(), map_of({ { "b", three }, { "c", four } }), "erase first");
 		}
 		{
-			MsgPack m = MsgPack::unserialise(wire);
+			MsgPack m = MsgPack::unserialize(wire);
 			m.erase("c");
-			CHECK_EQ(m.serialise(), map_of({ { "a", two }, { "b", three } }), "erase last");
+			CHECK_EQ(m.serialize(), map_of({ { "a", two }, { "b", three } }), "erase last");
 			m.erase("c");
-			CHECK_EQ(m.serialise(), map_of({ { "a", two }, { "b", three } }), "erase a missing key");
+			CHECK_EQ(m.serialize(), map_of({ { "a", two }, { "b", three } }), "erase a missing key");
 		}
 		{
-			MsgPack m = MsgPack::unserialise(wire);
+			MsgPack m = MsgPack::unserialize(wire);
 			(void)m.hash();
 			m.erase("b");
-			CHECK_EQ(m.serialise(), map_of({ { "a", two }, { "c", four } }), "hash, then erase");
+			CHECK_EQ(m.serialize(), map_of({ { "a", two }, { "c", four } }), "hash, then erase");
 			m["d"] = 9;
-			CHECK_EQ(m.serialise(), map_of({ { "a", two }, { "c", four }, { "d", "\x09" } }), "then add");
+			CHECK_EQ(m.serialize(), map_of({ { "a", two }, { "c", four }, { "d", "\x09" } }), "then add");
 		}
 		{
-			MsgPack m = MsgPack::unserialise(wire);
+			MsgPack m = MsgPack::unserialize(wire);
 			m["b"] = 7;
-			CHECK_EQ(m.serialise(), map_of({ { "a", two }, { "b", "\x07" }, { "c", four } }), "set after the merge");
+			CHECK_EQ(m.serialize(), map_of({ { "a", two }, { "b", "\x07" }, { "c", four } }), "set after the merge");
 		}
 		{
-			MsgPack m = MsgPack::unserialise(wire);
+			MsgPack m = MsgPack::unserialize(wire);
 			m.erase("a");
 			m.erase("b");
 			m.erase("c");
-			CHECK_EQ(m.serialise(), std::string("\x80"), "erase all");
+			CHECK_EQ(m.serialize(), std::string("\x80"), "erase all");
 		}
 	}
 }
@@ -229,9 +229,9 @@ void test_exhaustive() {
 
 			// after the first fill, by a walk
 			{
-				MsgPack m = MsgPack::unserialise(wire);
+				MsgPack m = MsgPack::unserialize(wire);
 				fill_all(m);
-				CHECK_EQ(m.serialise(), expected, "walk");
+				CHECK_EQ(m.serialize(), expected, "walk");
 				for (const auto& kv : expected_doc.m) {
 					CHECK(m[kv.first].as_u64() == kv.second.u);
 				}
@@ -239,36 +239,36 @@ void test_exhaustive() {
 			}
 			// after the first fill, by a hash
 			{
-				MsgPack m = MsgPack::unserialise(wire);
+				MsgPack m = MsgPack::unserialize(wire);
 				(void)m.hash();
-				CHECK_EQ(m.serialise(), expected, "hash");
+				CHECK_EQ(m.serialize(), expected, "hash");
 			}
 			// after the first fill, by a lookup of each key; then erase every key in turn
 			for (const auto& victim : expected_doc.m) {
-				MsgPack m = MsgPack::unserialise(wire);
+				MsgPack m = MsgPack::unserialize(wire);
 				model::Doc d = expected_doc;
 				CHECK(m[victim.first].as_u64() == victim.second.u);
 				m.erase(victim.first);
 				d.erase(victim.first);
-				CHECK_EQ(m.serialise(), d.bytes(), "erase");
+				CHECK_EQ(m.serialize(), d.bytes(), "erase");
 				for (const auto& kv : d.m) {
 					CHECK(m[kv.first].as_u64() == kv.second.u);
 				}
 				m["z"] = 99;
 				d.set("z", model::Doc::num(99));
-				CHECK_EQ(m.serialise(), d.bytes(), "add after erase");
+				CHECK_EQ(m.serialize(), d.bytes(), "add after erase");
 			}
 			// set every key in turn
 			for (const auto& target : expected_doc.m) {
-				MsgPack m = MsgPack::unserialise(wire);
+				MsgPack m = MsgPack::unserialize(wire);
 				model::Doc d = expected_doc;
 				m[target.first] = std::string("replaced");
 				d.set(target.first, model::Doc::str("replaced"));
-				CHECK_EQ(m.serialise(), d.bytes(), "set");
+				CHECK_EQ(m.serialize(), d.bytes(), "set");
 			}
 			// the hash is the one of the merged map
 			{
-				MsgPack m = MsgPack::unserialise(wire);
+				MsgPack m = MsgPack::unserialize(wire);
 				msgpack::object_handle h = msgpack::unpack(wire.data(), wire.size());
 				CHECK(m.hash() == model::hash_merged_maps(h.get()));
 			}
@@ -342,7 +342,7 @@ void test_random(std::size_t iterations) {
 
 		// a hash first: the maps reached through maps are merged and hashed, an array is hashed as it is
 		{
-			MsgPack m = MsgPack::unserialise(wire);
+			MsgPack m = MsgPack::unserialize(wire);
 			msgpack::object_handle h = msgpack::unpack(wire.data(), wire.size());
 			if (m.hash() != model::hash_merged_maps(h.get())) {
 				std::fprintf(stderr, "seed %" PRIu64 ": hash differs for %s\n", seed, hex(wire).c_str());
@@ -350,10 +350,10 @@ void test_random(std::size_t iterations) {
 			}
 		}
 
-		MsgPack m = MsgPack::unserialise(wire);
+		MsgPack m = MsgPack::unserialize(wire);
 		fill_all(m);
-		if (m.serialise() != expected) {
-			std::fprintf(stderr, "seed %" PRIu64 ": merged document differs\n  wire     %s\n  got      %s\n  expected %s\n", seed, hex(wire).c_str(), hex(m.serialise()).c_str(), hex(expected).c_str());
+		if (m.serialize() != expected) {
+			std::fprintf(stderr, "seed %" PRIu64 ": merged document differs\n  wire     %s\n  got      %s\n  expected %s\n", seed, hex(wire).c_str(), hex(m.serialize()).c_str(), hex(expected).c_str());
 			std::exit(1);
 		}
 		model::Doc d = doc_of_bytes(expected);
@@ -385,14 +385,14 @@ void test_random(std::size_t iterations) {
 					(void)mm->hash();
 					break;
 			}
-			if (m.serialise() != d.bytes()) {
-				std::fprintf(stderr, "seed %" PRIu64 " step %d: differs after the change of %s\n  got      %s\n  expected %s\n", seed, step, key.c_str(), hex(m.serialise()).c_str(), hex(d.bytes()).c_str());
+			if (m.serialize() != d.bytes()) {
+				std::fprintf(stderr, "seed %" PRIu64 " step %d: differs after the change of %s\n  got      %s\n  expected %s\n", seed, step, key.c_str(), hex(m.serialize()).c_str(), hex(d.bytes()).c_str());
 				std::exit(1);
 			}
 		}
 		// a copy and a round trip of the changed document
-		CHECK_EQ(MsgPack(m).serialise(), d.bytes(), "copy");
-		CHECK_EQ(MsgPack::unserialise(m.serialise()).serialise(), d.bytes(), "round trip");
+		CHECK_EQ(MsgPack(m).serialize(), d.bytes(), "copy");
+		CHECK_EQ(MsgPack::unserialize(m.serialize()).serialize(), d.bytes(), "round trip");
 	}
 	std::printf("random: %zu documents, %zu with repeated keys\n", iterations, with_repeats);
 	CHECK(with_repeats > iterations / 4);

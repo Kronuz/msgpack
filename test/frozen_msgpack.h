@@ -23,7 +23,7 @@
 
 // FROZEN. Never edit: this is the oracle of test/diff_test.cc.
 //
-// msgpack.h as it was at commit 667dc3d (before MsgPack::unserialise adopted the unpacker's
+// msgpack.h as it was at commit 667dc3d (before MsgPack::unserialize adopted the unpacker's
 // zone, and hash() and to_string() worked on the msgpack tree), with these renames so that it
 // can live in one translation unit beside the current header:
 //   MsgPack -> MsgPackOld, MsgPackType -> MsgPackOldType, the seven MSGPACK_* constants
@@ -455,11 +455,11 @@ public:
 	std::string to_string(int indent=-1) const;
 
 	template <typename B=msgpack::sbuffer>
-	std::string serialise() const;
-	static MsgPackOld unserialise(const char* data, std::size_t len, std::size_t& off);
-	static MsgPackOld unserialise(const char* data, std::size_t len);
-	static MsgPackOld unserialise(std::string_view s, std::size_t& off);
-	static MsgPackOld unserialise(std::string_view s);
+	std::string serialize() const;
+	static MsgPackOld unserialize(const char* data, std::size_t len, std::size_t& off);
+	static MsgPackOld unserialize(const char* data, std::size_t len);
+	static MsgPackOld unserialize(std::string_view s, std::size_t& off);
+	static MsgPackOld unserialize(std::string_view s);
 
 	void set_data(const std::shared_ptr<const Data>& new_data) const;
 	const std::shared_ptr<const Data> get_data() const;
@@ -2517,7 +2517,7 @@ inline std::size_t MsgPackOld::hash() const {
 		}
 		default: {
 			static const std::hash<std::string> hasher;
-			return hasher(serialise());
+			return hasher(serialize());
 		}
 	}
 }
@@ -3170,32 +3170,32 @@ inline std::ostream& MsgPackOld::operator<<(std::ostream& s) const {
 
 
 template <typename B>
-inline std::string MsgPackOld::serialise() const {
+inline std::string MsgPackOld::serialize() const {
 	B buf;
 	msgpack::pack(&buf, *_const_body->_obj);
 	return std::string(buf.data(), buf.size());
 }
 
 
-inline MsgPackOld MsgPackOld::unserialise(const char* data, std::size_t len, std::size_t& off) {
+inline MsgPackOld MsgPackOld::unserialize(const char* data, std::size_t len, std::size_t& off) {
 	return MsgPackOld(msgpack::unpack(data, len, off).get());
 }
 
 
-inline MsgPackOld MsgPackOld::unserialise(std::string_view s, std::size_t& off) {
-	return unserialise(s.data(), s.size(), off);
+inline MsgPackOld MsgPackOld::unserialize(std::string_view s, std::size_t& off) {
+	return unserialize(s.data(), s.size(), off);
 }
 
 
-inline MsgPackOld MsgPackOld::unserialise(const char* data, std::size_t len) {
+inline MsgPackOld MsgPackOld::unserialize(const char* data, std::size_t len) {
 	std::size_t off = 0;
-	return unserialise(data, len, off);
+	return unserialize(data, len, off);
 }
 
 
-inline MsgPackOld MsgPackOld::unserialise(std::string_view s) {
+inline MsgPackOld MsgPackOld::unserialize(std::string_view s) {
 	std::size_t off = 0;
-	return unserialise(s, off);
+	return unserialize(s, off);
 }
 
 

@@ -159,14 +159,14 @@ Upgrading a pin from before 2026-10-30: [the consumer upgrade note](https://gith
   it moved, so `c` was lost, `b` repeated, the index of the map disagreed with the
   tree (`assert(via.map.size == map.size())` failed in a build with assertions) and
   `erase(key)` then dereferenced the end iterator. The merge runs when a map is
-  first filled (a lookup, a walk, `hash()`, `erase`); `serialise()` and `size()` of a
+  first filled (a lookup, a walk, `hash()`, `erase`); `serialize()` and `size()` of a
   map nothing has filled still give the document as it came. The reference is a
   `std::map` model (`test/model.h`): `test/merge_test.cc` (`msgpack_merge`) checks
   lookups, `erase`, writes, `hash()`, copies and round trips against it on
   hand-written documents, on every document of up to 6 entries over 3 keys (1092),
   and on 3000 random nested ones (2348 with a repeat).
   What a consumer sees: for a document that repeats a key, `hash()` is now the hash
-  of the merged map (it was the hash of the corrupted one), and so are `serialise()`
+  of the merged map (it was the hash of the corrupted one), and so are `serialize()`
   and a copy after the first fill. Documents without a repeated key are unchanged,
   and `hash()` of one still allocates nothing.
 - Pushing onto an array of maps after touching some of its elements no longer reads
@@ -182,7 +182,7 @@ Upgrading a pin from before 2026-10-30: [the consumer upgrade note](https://gith
   stands for another object (after the elements moved, and after `erase(index)`),
   which a copy used to do by accident. `test/growth_test.cc` (`msgpack_growth`):
   400 records, then `push_back` of a record and a write to `array[i]["name"]`
-  800 times, on a built and on an unserialised array, and 400 random sequences of
+  800 times, on a built and on an unserialized array, and 400 random sequences of
   push, set, erase and read on arrays of maps, against the model; under
   AddressSanitizer it reads no freed memory.
 - Proof that each test fails without its fix (`tools/mutants.py`, 7 new
@@ -209,11 +209,11 @@ Upgrading a pin from before 2026-10-30: [the consumer upgrade note](https://gith
   `erase`, `hash()`) throws "MAP keys must be of type STR". `_init_map` indexed the
   entries before the bad key and then threw, so the next fill took the keys already
   indexed for repeats and removed them from the tree: on `{"a":1, 5:2}` the second
-  `erase("a")` gave `serialise()` = `810502` (the frozen code gave `80`, after skipping
+  `erase("a")` gave `serialize()` = `810502` (the frozen code gave `80`, after skipping
   the non-string key and reading it as a string). `_init_map` now checks the type of
   every key it is about to index before it changes anything, so the throw leaves the
   tree, the index and `size()` as they were (repeated keys before the bad key are not
-  merged either) and every later fill throws the same way. `serialise()`, `size()` and
+  merged either) and every later fill throws the same way. `serialize()`, `size()` and
   copies do not fill, so they work on such a map. `at(size_t)`, which read
   `via.str` of the key at that position, is only reached after the fill, so it no longer
   reads a key that is not a string. The oracle is the input bytes:
@@ -224,7 +224,7 @@ Upgrading a pin from before 2026-10-30: [the consumer upgrade note](https://gith
   documents, 169560 sequences), and to 600 random nested documents (8400 steps, 1697 on a
   bad map) that keep being changed with set, erase, push_back and `erase(index)`
   against the model (`test/model.h`, whose `Doc` gains a RAW kind). Each call either throws
-  the one exception or leaves `serialise()` equal to the bytes it came as. On the unfixed
+  the one exception or leaves `serialize()` equal to the bytes it came as. On the unfixed
   code it fails on the second `erase`. Three mutants, all killed (`tools/mutants.py`):
   `revert_failed_fill` (the check back in the loop), `failed_fill_first_key_only` and
   `failed_fill_last_key_skipped`.
@@ -236,7 +236,7 @@ bounded bug hunt on `msgpack.h`: random sequences of every mutating operation (s
 `put`, `emplace`, `add`, `update`, `push_back`, `append`, `erase` by key, position, iterator and `MsgPack`,
 `clear`, `reserve`, assignment of a whole value, 40 keys or elements at once, copy and move) at any depth of
 a document of maps, arrays, scalars and bad maps, against the model in `test/model.h`, comparing
-`serialise()` after every step and reading the whole document back through the API every few. Properties
+`serialize()` after every step and reading the whole document back through the API every few. Properties
 checked on documents without a bad map: `hash()`, `to_string()`, `as_document()` and a parse of the text
 agree with a fresh read of the same bytes; on documents with one, `to_string()` (compact and indented) and
 `as_document()` give the text of the model's JSON writer, keys as the README says; `lock()` of a copy
@@ -272,11 +272,11 @@ Each needs an owner decision.
 
 ### Changed
 
-- `MsgPack::unserialise` reads into the value's own zone. It used to unpack into
+- `MsgPack::unserialize` reads into the value's own zone. It used to unpack into
   a zone of its own and deep-copy the tree into a second one (`MsgPack(object)`);
   the unpacked tree is now the value's tree. The input is still never referenced:
   strings, binaries and ext bodies are copied into the zone, so a value outlives
-  its buffer. Values, offsets, exceptions, `serialise()` bytes and the growth of a
+  its buffer. Values, offsets, exceptions, `serialize()` bytes and the growth of a
   value after a mutation are unchanged. A read costs 5 allocations instead of 7
   and one 8 KB zone chunk instead of two (`test/alloc_test.cc`). Time per read on
   an M4 Pro (arm64) and an i9-9980HK (x86_64), small 63 B / med 0.5 KB /
@@ -306,7 +306,7 @@ Each needs an owner decision.
 
 Measured with a benchmark harness that was not yet part of this repository (the rows of
 `msgpack_benchmark` are the same operations; see `docs/perf/survey-2026-10.md`):
-`unserialise`, `hash()`, `to_string()` and the rows around them over four documents of 63 B,
+`unserialize`, `hash()`, `to_string()` and the rows around them over four documents of 63 B,
 0.5 KB, 104 KB and 8.9 KB. The frozen and the new header are built side by side with `-O3`
 and run interleaved (old, new, old, new).
 
@@ -315,10 +315,10 @@ and run interleaved (old, new, old, new).
 - x86_64: i9-9980HK, Apple clang 17, the machine to itself, 2 passes. `hash()` comes from a second
   run with the final header, 5 rounds.
 - A GitHub runner (AMD EPYC 7763, 4 vCPUs, 3 interleaved passes, noisier): 1.54x to 1.61x
-  for `unserialise`, 5.50x / 2.72x / 1.13x for `hash()`, 1.42x to 1.65x for `to_string()`.
+  for `unserialize`, 5.50x / 2.72x / 1.13x for `hash()`, 1.42x to 1.65x for `to_string()`.
 - Every checksum of the 240 rows (every wire type, the repeated-key document included) is
   equal between the two headers on all three.
-- Rows this change does not touch (`copy`, `serialise`, `walk(filled)`, `lookup3(filled)`,
+- Rows this change does not touch (`copy`, `serialize`, `walk(filled)`, `lookup3(filled)`,
   `unpack`, `as_document`) stay within 3% of the old header on arm64, except `lookup3(filled)`
   and `walk(filled)` on the 0.5 KB and 104 KB documents (0.96x to 0.98x, spreads of 4% to
   10%). The code on those paths is unchanged and a second build with a different function
@@ -350,16 +350,16 @@ and run interleaved (old, new, old, new).
   not strings) and 48 hand-built ones, read and operated on in random order by
   `MsgPack` and by the frozen `MsgPackOld` (`test/frozen_msgpack.h`, the previous
   `msgpack.h` with the names changed). Every result and every exception must be
-  equal: `unserialise` (value and offset, for every prefix of a document too),
+  equal: `unserialize` (value and offset, for every prefix of a document too),
   `hash()` (also against a definition written from the specification, for
-  documents without repeated keys), `serialise()`, `to_string()` with and without
+  documents without repeated keys), `serialize()`, `to_string()` with and without
   indent, copies, moves, walks, mutations, `lock()`.
 - `test/lifetime_test.cc` (`msgpack_lifetime`): a value outlives its input buffer
   (overwritten and freed), the values made from it, the unpacker, and the thread
   that made it; copies and moves; a part taken out of a value; growth past the
   unpacker's chunk; failed reads leave the offset alone. Run under
   AddressSanitizer in CI.
-- `test/alloc_test.cc` (`msgpack_alloc`): allocation counts of `unserialise`,
+- `test/alloc_test.cc` (`msgpack_alloc`): allocation counts of `unserialize`,
   `hash()` and `to_string()` against the frozen implementation (not built under a
   sanitizer, because it replaces `operator new`).
 

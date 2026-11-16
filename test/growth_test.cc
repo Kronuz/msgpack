@@ -83,7 +83,7 @@ model::Doc record(std::uint64_t i) {
 }
 
 void check(const MsgPack& m, const model::Doc& d, const char* what, std::uint64_t seed, int step) {
-	const std::string got = m.serialise();
+	const std::string got = m.serialize();
 	const std::string expected = d.bytes();
 	if (got != expected) {
 		std::fprintf(stderr, "seed %" PRIu64 " step %d: %s: the document differs\n  got      %s\n  expected %s\n", seed, step, what, hex(got).c_str(), hex(expected).c_str());
@@ -96,7 +96,7 @@ void check(const MsgPack& m, const model::Doc& d, const char* what, std::uint64_
 void test_push_and_write(bool from_wire) {
 	model::Doc d = model::Doc::arr();
 	for (std::uint64_t i = 0; i < 400; ++i) d.a.push_back(record(i));
-	MsgPack value = from_wire ? MsgPack::unserialise(d.bytes()) : build(d);
+	MsgPack value = from_wire ? MsgPack::unserialize(d.bytes()) : build(d);
 	for (std::uint64_t i = 400; i < 1200; ++i) {
 		value.push_back(build(record(i)));
 		d.a.push_back(record(i));
@@ -122,7 +122,7 @@ void test_random(std::size_t iterations) {
 		model::Doc d = model::Doc::arr();
 		const std::size_t start = r.below(6);
 		for (std::size_t i = 0; i < start; ++i) d.a.push_back(record(i));
-		MsgPack m = r.below(2) ? MsgPack::unserialise(d.bytes()) : build(d);
+		MsgPack m = r.below(2) ? MsgPack::unserialize(d.bytes()) : build(d);
 		const int steps = 10 + static_cast<int>(r.below(60));
 		for (int step = 0; step < steps; ++step) {
 			switch (r.below(7)) {
@@ -170,7 +170,7 @@ void test_random(std::size_t iterations) {
 			check(m, d, "random", seed, step);
 		}
 		check(MsgPack(m), d, "copy", seed, steps);
-		check(MsgPack::unserialise(m.serialise()), d, "round trip", seed, steps);
+		check(MsgPack::unserialize(m.serialize()), d, "round trip", seed, steps);
 	}
 	std::printf("random: %zu arrays of maps\n", iterations);
 }

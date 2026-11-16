@@ -5,14 +5,14 @@
 // that is not a string, which throws when it is filled). Each step picks a node, applies one
 // operation to the MsgPack and to the model (set, replace, put, emplace, add, update, push_back,
 // append, erase by key, position and iterator, clear, reserve, assignment of a whole value, copy,
-// move), and compares serialise() with the model; every few steps the whole document is read back
+// move), and compares serialize() with the model; every few steps the whole document is read back
 // through the API (every key looked up, every position read) and compared.
 //
 // Failures injected:
 //  - a bad map anywhere: every operation that fills it throws the one exception and changes nothing;
 //  - an allocation that fails (HUNT_INJECT_ALLOC, a replaced operator new that throws std::bad_alloc
 //    after a countdown, armed around one operation): the operation may or may not have taken effect,
-//    so the model is read back from what serialise() gives, and the MsgPack must agree with its own
+//    so the model is read back from what serialize() gives, and the MsgPack must agree with its own
 //    bytes (every key found, every position read) and keep working.
 //
 // usage: msgpack_hunt_test [--stress N] [--seed S] [--steps N]; MSGPACK_HUNT_SKIP=op,op skips named
@@ -215,7 +215,7 @@ Doc from_bytes(const std::string& bytes) {
 }
 
 MsgPack to_value(const Doc& d) {
-	return MsgPack::unserialise(d.bytes());
+	return MsgPack::unserialize(d.bytes());
 }
 
 // ---- what a failing fill does
@@ -269,7 +269,7 @@ void check_tree(const MsgPack& m, const Doc& d, const std::string& path) {
 		case Doc::RAW:
 			if (is_bad_map(d)) {
 				if (!throws_bad_map([&] { (void)m.count("a"); })) fail("a bad map did not throw at " + here, "no throw", kMessage);
-				if (m.serialise() != d.s) fail("a bad map changed at " + here, hex(m.serialise()), hex(d.s));
+				if (m.serialize() != d.s) fail("a bad map changed at " + here, hex(m.serialize()), hex(d.s));
 			}
 			break;
 	}
@@ -546,7 +546,7 @@ bool apply(Subject& s, MsgPack& m, Doc& d, Op op, Rng& r, bool is_root) {
 		case OP_COPY: {
 			// the copy is the same document, and changing it leaves the original alone
 			MsgPack c(m);
-			if (c.serialise() != d.bytes()) fail("a copy differs", hex(c.serialise()), hex(d.bytes()));
+			if (c.serialize() != d.bytes()) fail("a copy differs", hex(c.serialize()), hex(d.bytes()));
 			Doc cd = d;
 			Rng r2{ r.next() };
 			g_no_inject = true;
@@ -555,7 +555,7 @@ bool apply(Subject& s, MsgPack& m, Doc& d, Op op, Rng& r, bool is_root) {
 				try {
 					apply(s, c, cd, o, r2, false);
 					if (g_threw) {   // an injected allocation failure: the copy's model is read back
-						cd = from_bytes(c.serialise());
+						cd = from_bytes(c.serialize());
 						g_threw = false;
 					}
 				} catch (...) {
@@ -656,11 +656,11 @@ void run_one(std::uint64_t seed, std::size_t steps) {
 		if (is_bad_map(*d) && op != OP_CLEAR && op != OP_ASSIGN && op != OP_RESERVE && op != OP_COPY && op != OP_READ) {
 			// every operation that fills it throws the one exception and changes nothing
 			bool threw = false;
-			const std::string before = m->serialise();
+			const std::string before = m->serialize();
 			if (op == OP_ERASE_KEY || op == OP_ERASE_POS || op == OP_ERASE_ITER) threw = throws_bad_map([&] { m->erase(std::string_view("a")); });
 			else threw = throws_bad_map([&] { (void)m->count("a"); });
 			if (!threw) fail("an operation on a bad map did not throw", "no throw", kMessage);
-			CHECK_SAME("a bad map after a throw", m->serialise(), before);
+			CHECK_SAME("a bad map after a throw", m->serialize(), before);
 			continue;
 		}
 
@@ -673,33 +673,33 @@ void run_one(std::uint64_t seed, std::size_t steps) {
 		} catch (const std::exception& e) {
 			fail(std::string("an operation threw: ") + e.what(), "exception", "none");
 		}
-		const bool differs = s.root.serialise() != s.doc.bytes();
+		const bool differs = s.root.serialize() != s.doc.bytes();
 		bool resynced = false;
 		if (g_threw) {
 			// an injected allocation failure: the operation may or may not have taken effect, and what
 			// the MsgPack says is read back; it must agree with its own bytes (check_tree below)
 			++stats.injected_throws;
-			s.doc = from_bytes(s.root.serialise());
+			s.doc = from_bytes(s.root.serialize());
 			resynced = true;
 		} else if (differs) {
-			fail("serialise() after the operation", hex(s.root.serialise()), hex(s.doc.bytes()));
+			fail("serialize() after the operation", hex(s.root.serialize()), hex(s.doc.bytes()));
 		}
 		++stats.per_op[op];
 		++stats.steps;
 		if (step % 5 == 4 || resynced) {
 			check_tree(s.root, s.doc, "");
-			CHECK_SAME("a copy of the document", MsgPack(s.root).serialise(), s.doc.bytes());
+			CHECK_SAME("a copy of the document", MsgPack(s.root).serialize(), s.doc.bytes());
 			if (!has_bad(s.doc)) {
 				// the same bytes, read again, hash and print the same
-				MsgPack again = MsgPack::unserialise(s.root.serialise());
+				MsgPack again = MsgPack::unserialize(s.root.serialize());
 				if (s.root.hash() != again.hash()) fail("hash() of the same document", std::to_string(s.root.hash()), std::to_string(again.hash()));
 				CHECK_SAME("to_string() of the same document", s.root.to_string(), again.to_string());
 				// the document through RapidJSON, as a Document and as text, and back
-				CHECK_SAME("the document through as_document()", MsgPack(s.root.as_document()).serialise(), s.doc.bytes());
+				CHECK_SAME("the document through as_document()", MsgPack(s.root.as_document()).serialize(), s.doc.bytes());
 				rapidjson::Document parsed;
 				const std::string text = s.root.to_string();
 				parsed.Parse(text.c_str(), text.size());
-				CHECK_SAME("the document through to_string() and a parse", MsgPack(parsed).serialise(), s.doc.bytes());
+				CHECK_SAME("the document through to_string() and a parse", MsgPack(parsed).serialize(), s.doc.bytes());
 			} else {
 				// a map with a key that is not a string is written with the key as its JSON text (the rule of the README)
 				const std::string bytes = s.doc.bytes();
@@ -714,7 +714,7 @@ void run_one(std::uint64_t seed, std::size_t steps) {
 		}
 	}
 	check_tree(s.root, s.doc, "");
-	CHECK_SAME("the document at the end", MsgPack::unserialise(s.root.serialise()).serialise(), s.doc.bytes());
+	CHECK_SAME("the document at the end", MsgPack::unserialize(s.root.serialize()).serialize(), s.doc.bytes());
 }
 
 // erase() says how many elements it erased: 1 for the last element as for any other, 0 for one that is not there.
@@ -741,9 +741,9 @@ void test_erase_counts() {
 				next = it.erase(next);
 				CHECK((next == it.end()) == (victim + 1 == n));   // the iterator after the last one is end()
 			}
-			CHECK_SAME("an array after erase(pos)", a.serialise(), arr.bytes());
-			CHECK_SAME("a map after erase(key)", m.serialise(), map.bytes());
-			if (victim < n) CHECK_SAME("an array after erase(iterator)", it.serialise(), arr.bytes());
+			CHECK_SAME("an array after erase(pos)", a.serialize(), arr.bytes());
+			CHECK_SAME("a map after erase(key)", m.serialize(), map.bytes());
+			if (victim < n) CHECK_SAME("an array after erase(iterator)", it.serialize(), arr.bytes());
 		}
 	}
 }

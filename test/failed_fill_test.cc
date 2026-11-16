@@ -7,7 +7,7 @@
 // merged either),
 // size() counts the entries as they came, and the next operation that fills the map throws the
 // same way again. The oracle is the input: every call, in any order and as often as it is made,
-// either throws that exception or leaves serialise() equal to the wire bytes.
+// either throws that exception or leaves serialize() equal to the wire bytes.
 //
 // The test checks it on hand-written documents (every kind of key that is not a string, in
 // every position, with repeats around it), on every document of up to 4 entries over the keys
@@ -125,8 +125,8 @@ std::string outcome(F&& f) {
 	}
 }
 
-enum Op { FIND, COUNT, AT_KEY, INDEX, AT_POS, BEGIN, ERASE, SET, HASH, SIZE, SERIALISE, COPY, N_OPS };
-const char* const op_names[N_OPS] = { "find", "count", "at(key)", "[]", "at(pos)", "*begin()", "erase", "set", "hash", "size", "serialise", "copy" };
+enum Op { FIND, COUNT, AT_KEY, INDEX, AT_POS, BEGIN, ERASE, SET, HASH, SIZE, SERIALIZE, COPY, N_OPS };
+const char* const op_names[N_OPS] = { "find", "count", "at(key)", "[]", "at(pos)", "*begin()", "erase", "set", "hash", "size", "serialize", "copy" };
 
 bool fills(Op op) {
 	return op <= HASH;
@@ -149,10 +149,10 @@ void apply(MsgPack& m, Op op, const std::string& wire, const std::string& contex
 		case SET: r = outcome([&] { m["zz"] = 1; }); break;
 		case HASH: r = outcome([&] { (void)m.hash(); }); break;
 		case SIZE: break;
-		case SERIALISE: break;
+		case SERIALIZE: break;
 		case COPY: {
 			MsgPack c(m);
-			CHECK_EQ(c.serialise(), wire, where);
+			CHECK_EQ(c.serialize(), wire, where);
 			CHECK(outcome([&] { (void)c.find("a"); }) == g_failure || g_failure.empty());
 			break;
 		}
@@ -170,7 +170,7 @@ void apply(MsgPack& m, Op op, const std::string& wire, const std::string& contex
 	} else {
 		CHECK(r == "ok");
 	}
-	CHECK_EQ(m.serialise(), wire, where);
+	CHECK_EQ(m.serialize(), wire, where);
 	if (m.size() != entries_of(wire)) {
 		std::fprintf(stderr, "%s: size() is %zu, the map has %zu entries\n", where.c_str(), m.size(), entries_of(wire));
 		std::exit(1);
@@ -186,7 +186,7 @@ std::string describe(const std::vector<Op>& ops) {
 }
 
 void run_sequence(const std::string& wire, const std::vector<Op>& ops, const std::string& name) {
-	MsgPack m = MsgPack::unserialise(wire);
+	MsgPack m = MsgPack::unserialize(wire);
 	for (std::size_t i = 0; i < ops.size(); ++i) {
 		apply(m, ops[i], wire, name + " after [" + describe(std::vector<Op>(ops.begin(), ops.begin() + i)) + "]");
 	}
@@ -216,7 +216,7 @@ void test_cases() {
 	};
 	const std::vector<std::vector<Op>> sequences = {
 		{ ERASE, ERASE }, { HASH, ERASE }, { COUNT, ERASE }, { FIND, SET }, { BEGIN, AT_POS, FIND },
-		{ ERASE, HASH, COUNT, ERASE }, { AT_POS, AT_POS }, { INDEX, SERIALISE, INDEX }, { SET, SET, ERASE },
+		{ ERASE, HASH, COUNT, ERASE }, { AT_POS, AT_POS }, { INDEX, SERIALIZE, INDEX }, { SET, SET, ERASE },
 		{ COPY, ERASE, COPY },
 	};
 	for (const auto& c : cases) {
@@ -296,7 +296,7 @@ std::size_t test_exhaustive() {
 // ---- random nested documents with bad maps inside
 
 // A map that has at least one key that is not a string, among string keys that may repeat. The
-// values are fixints and the keys minimal, because serialise() packs the tree and so gives every
+// values are fixints and the keys minimal, because serialize() packs the tree and so gives every
 // integer its shortest form, filled or not.
 std::string random_bad_map(Rng& r) {
 	const std::size_t n = 1 + r.below(4);
@@ -389,9 +389,9 @@ void test_random(std::size_t documents) {
 	for (std::size_t n = 0; n < documents; ++n) {
 		Rng r{ 1000 + n * 7919 };
 		model::Doc doc = random_doc(r, 0, true);
-		MsgPack root = MsgPack::unserialise(doc.bytes());
+		MsgPack root = MsgPack::unserialize(doc.bytes());
 		const std::string name = "random document " + std::to_string(n);
-		CHECK_EQ(root.serialise(), doc.bytes(), name);
+		CHECK_EQ(root.serialize(), doc.bytes(), name);
 		for (int step = 0; step < 14; ++step, ++steps) {
 			MsgPack* m = &root;
 			model::Doc* d = &doc;
@@ -422,7 +422,7 @@ void test_random(std::size_t documents) {
 							// index of the old value on the new one (see "Known problems" in CHANGELOG).
 							if (d->find(key) != nullptr) break;
 							const std::string raw = random_bad_map(r);
-							m->put(std::string_view(key), MsgPack::unserialise(raw));
+							m->put(std::string_view(key), MsgPack::unserialize(raw));
 							d->set(key, model::Doc::raw(raw));
 							break;
 						}
@@ -444,7 +444,7 @@ void test_random(std::size_t documents) {
 						}
 						case 1: {
 							const std::string raw = random_bad_map(r);
-							m->push_back(MsgPack::unserialise(raw));
+							m->push_back(MsgPack::unserialize(raw));
 							d->a.push_back(model::Doc::raw(raw));
 							break;
 						}
@@ -463,12 +463,12 @@ void test_random(std::size_t documents) {
 				default:
 					break;
 			}
-			CHECK_EQ(root.serialise(), doc.bytes(), context);
+			CHECK_EQ(root.serialize(), doc.bytes(), context);
 			if (step % 4 == 3) check_bad_maps(root, doc, r, context);
 		}
 		check_bad_maps(root, doc, r, name + " at the end");
-		CHECK_EQ(root.serialise(), doc.bytes(), name + " at the end");
-		CHECK_EQ(MsgPack(root).serialise(), doc.bytes(), name + " copy");
+		CHECK_EQ(root.serialize(), doc.bytes(), name + " at the end");
+		CHECK_EQ(MsgPack(root).serialize(), doc.bytes(), name + " copy");
 	}
 	std::printf("random: %zu documents, %zu steps, %zu on a bad map\n", documents, steps, bad);
 }

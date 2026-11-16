@@ -39,8 +39,8 @@ static void test_construct_copy_index_roundtrip() {
 	assert(!copy["nested"]["flag"].as_boolean());
 	assert(copy["items"].size() == 4);
 
-	std::string wire = value.serialise();
-	MsgPack round_trip = MsgPack::unserialise(wire);
+	std::string wire = value.serialize();
+	MsgPack round_trip = MsgPack::unserialize(wire);
 	assert(round_trip == value);
 	assert(round_trip.to_string() == value.to_string());
 }

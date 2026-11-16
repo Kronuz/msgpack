@@ -2,11 +2,11 @@
 // other libraries is benchmarks/compare.cc, which prints rows with the same operation names; compare.py
 // joins the two outputs.
 //
-//   read          bytes to a value            MsgPack::unserialise      msgpack::unpack
+//   read          bytes to a value            MsgPack::unserialize      msgpack::unpack
 //   read+walk     read, then visit every node
 //   read+lookup3  read, then three lookups
 //   lookup3       three lookups in a value that is already read (and, for MsgPack, filled)
-//   write         value to bytes              MsgPack::serialise        msgpack::pack into an sbuffer
+//   write         value to bytes              MsgPack::serialize        msgpack::pack into an sbuffer
 //   copy          a copy of the value
 //   update        read, set one field, write
 //   merge         read, update() with a two-entry map (one key replaced, one added), write
@@ -169,12 +169,12 @@ int main(int argc, char** argv) {
 			const auto h = msgpack::unpack(bytes.data(), bytes.size());
 			ref = walk_object(0, h.get());
 			ref_lookup = lookup_object(h.get(), paths);
-			MsgPack d = MsgPack::unserialise(bytes);
+			MsgPack d = MsgPack::unserialize(bytes);
 			if (walk_value(0, d) != ref || lookup_value(d, paths) != ref_lookup || lookup_value_index(d, paths) != ref_lookup) {
 				std::printf("MISMATCH: MsgPack reads %s differently\n", dn);
 				return 1;
 			}
-			if (d.serialise() != bytes) {
+			if (d.serialize() != bytes) {
 				std::printf("MISMATCH: MsgPack writes %s differently\n", dn);
 				return 1;
 			}
@@ -183,21 +183,21 @@ int main(int argc, char** argv) {
 		if (filter.wants_op("read")) {
 			auto r = bench::time_it([&] { auto h = msgpack::unpack(bytes.data(), bytes.size()); bench::keep(h); });
 			bench::row(BUNDLED, dn, "read", r, ref, nb);
-			r = bench::time_it([&] { MsgPack m = MsgPack::unserialise(bytes); bench::keep(m); });
+			r = bench::time_it([&] { MsgPack m = MsgPack::unserialize(bytes); bench::keep(m); });
 			bench::row(OURS, dn, "read", r, ref, nb);
 			// the same rows again: the spread between a row and its repeat is the noise of the machine
 			r = bench::time_it([&] { auto h = msgpack::unpack(bytes.data(), bytes.size()); bench::keep(h); });
 			bench::row(BUNDLED, dn, "read(A/A)", r, ref, nb);
-			r = bench::time_it([&] { MsgPack m = MsgPack::unserialise(bytes); bench::keep(m); });
+			r = bench::time_it([&] { MsgPack m = MsgPack::unserialize(bytes); bench::keep(m); });
 			bench::row(OURS, dn, "read(A/A)", r, ref, nb);
 		}
 		if (filter.wants_op("walk")) {
 			std::uint64_t ck = 0;
 			auto r = bench::time_it([&] { auto h = msgpack::unpack(bytes.data(), bytes.size()); ck = walk_object(0, h.get()); bench::keep(ck); });
 			bench::row(BUNDLED, dn, "read+walk", r, ck, nb);
-			r = bench::time_it([&] { MsgPack m = MsgPack::unserialise(bytes); ck = walk_value(0, m); bench::keep(ck); });
+			r = bench::time_it([&] { MsgPack m = MsgPack::unserialize(bytes); ck = walk_value(0, m); bench::keep(ck); });
 			bench::row(OURS, dn, "read+walk", r, ck, nb);
-			MsgPack filled = MsgPack::unserialise(bytes);
+			MsgPack filled = MsgPack::unserialize(bytes);
 			walk_value(0, filled);
 			r = bench::time_it([&] { ck = walk_value(0, filled); bench::keep(ck); });
 			bench::row(OURS, dn, "walk(filled)", r, ck, nb);
@@ -209,9 +209,9 @@ int main(int argc, char** argv) {
 			std::uint64_t ck = 0;
 			auto r = bench::time_it([&] { auto h = msgpack::unpack(bytes.data(), bytes.size()); ck = lookup_object(h.get(), paths); bench::keep(ck); });
 			bench::row(BUNDLED, dn, "read+lookup3", r, ck, nb);
-			r = bench::time_it([&] { MsgPack m = MsgPack::unserialise(bytes); ck = lookup_value(m, paths); bench::keep(ck); });
+			r = bench::time_it([&] { MsgPack m = MsgPack::unserialize(bytes); ck = lookup_value(m, paths); bench::keep(ck); });
 			bench::row(OURS, dn, "read+lookup3", r, ck, nb);
-			MsgPack filled = MsgPack::unserialise(bytes);
+			MsgPack filled = MsgPack::unserialize(bytes);
 			lookup_value(filled, paths);
 			r = bench::time_it([&] { ck = lookup_value(filled, paths); bench::keep(ck); });
 			bench::row(OURS, dn, "lookup3", r, ck);
@@ -222,9 +222,9 @@ int main(int argc, char** argv) {
 			bench::row(BUNDLED, dn, "lookup3(linear)", r, ck);
 		}
 		if (filter.wants_op("write")) {
-			MsgPack m = MsgPack::unserialise(bytes);
+			MsgPack m = MsgPack::unserialize(bytes);
 			std::uint64_t ck = 0;
-			auto r = bench::time_it([&] { auto s = m.serialise(); ck = s.size(); bench::keep(s); });
+			auto r = bench::time_it([&] { auto s = m.serialize(); ck = s.size(); bench::keep(s); });
 			bench::row(OURS, dn, "write", r, ck, nb);
 			const auto h = msgpack::unpack(bytes.data(), bytes.size());
 			r = bench::time_it([&] { msgpack::sbuffer sb; msgpack::pack(sb, h.get()); ck = sb.size(); bench::keep(sb); });
@@ -234,10 +234,10 @@ int main(int argc, char** argv) {
 			bench::row(BUNDLED, dn, "write(reused)", r, ck, nb);
 		}
 		if (filter.wants_op("copy")) {
-			MsgPack m = MsgPack::unserialise(bytes);
+			MsgPack m = MsgPack::unserialize(bytes);
 			auto r = bench::time_it([&] { MsgPack c2(m); bench::keep(c2); });
 			bench::row(OURS, dn, "copy", r, ref, nb);
-			MsgPack filled = MsgPack::unserialise(bytes);
+			MsgPack filled = MsgPack::unserialize(bytes);
 			walk_value(0, filled);
 			r = bench::time_it([&] { MsgPack c2(filled); bench::keep(c2); });
 			bench::row(OURS, dn, "copy(filled)", r, ref, nb);
@@ -251,11 +251,11 @@ int main(int argc, char** argv) {
 		if (filter.wants_op("update")) {
 			std::uint64_t ck = 0;
 			auto r = bench::time_it([&] {
-				MsgPack m = MsgPack::unserialise(bytes);
+				MsgPack m = MsgPack::unserialize(bytes);
 				if (c.name == "wide") m["k0500"] = 99;
 				else if (c.name == "large") m[3]["score"] = 99;
 				else m["score"] = 99;
-				auto s = m.serialise();
+				auto s = m.serialize();
 				ck = s.size();
 				bench::keep(s);
 			});
@@ -265,16 +265,16 @@ int main(int argc, char** argv) {
 			const MsgPack patch = {{"score", 99}, {"added", "x"}};
 			std::uint64_t ck = 0;
 			auto r = bench::time_it([&] {
-				MsgPack m = MsgPack::unserialise(bytes);
+				MsgPack m = MsgPack::unserialize(bytes);
 				(c.name == "large" ? m[3] : m).update(patch);
-				auto s = m.serialise();
+				auto s = m.serialize();
 				ck = s.size();
 				bench::keep(s);
 			});
 			bench::row(OURS, dn, "merge", r, ck, nb);
 		}
 		if (filter.wants_op("json")) {
-			MsgPack m = MsgPack::unserialise(bytes);
+			MsgPack m = MsgPack::unserialize(bytes);
 			std::uint64_t ck = 0;
 			auto r = bench::time_it([&] { auto s = m.to_string(); ck = s.size(); bench::keep(s); });
 			bench::row(OURS, dn, "json-write", r, ck, c.json.size());
@@ -287,7 +287,7 @@ int main(int argc, char** argv) {
 			bench::row(OURS, dn, "json-read", r, 0, c.json.size());
 		}
 		if (filter.wants_op("hash")) {
-			MsgPack m = MsgPack::unserialise(bytes);
+			MsgPack m = MsgPack::unserialize(bytes);
 			const std::size_t hv = m.hash();
 			const auto r = bench::time_it([&] { std::size_t x = m.hash(); bench::keep(x); });
 			bench::row(OURS, dn, "hash", r, hv, nb);

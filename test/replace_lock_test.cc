@@ -153,7 +153,7 @@ void replace_case(bool root_is_map, Kind old_kind, Kind new_kind, Read read, std
 		if (root_is_map) doc.set("k" + std::to_string(i), std::move(v));
 		else doc.a.push_back(std::move(v));
 	}
-	MsgPack root = MsgPack::unserialise(doc.bytes());
+	MsgPack root = MsgPack::unserialize(doc.bytes());
 	const std::string key = "k1";
 
 	Doc& old_doc = root_is_map ? doc.m[1].second : doc.a[1];
@@ -166,7 +166,7 @@ void replace_case(bool root_is_map, Kind old_kind, Kind new_kind, Read read, std
 	}
 
 	Doc fresh = make_value(new_kind, r, 0);
-	MsgPack value = MsgPack::unserialise(fresh.bytes());
+	MsgPack value = MsgPack::unserialize(fresh.bytes());
 	if (root_is_map) {
 		root.replace(std::string_view(key), std::move(value));
 		doc.set(key, fresh);
@@ -174,7 +174,7 @@ void replace_case(bool root_is_map, Kind old_kind, Kind new_kind, Read read, std
 		root.replace(static_cast<std::size_t>(1), std::move(value));
 		doc.a[1] = fresh;
 	}
-	CHECK_EQ(root.serialise(), doc.bytes(), name + " after the replace");
+	CHECK_EQ(root.serialize(), doc.bytes(), name + " after the replace");
 
 	// the new value, read and changed through the API, and its neighbours
 	MsgPack& now = root_is_map ? root.at(std::string_view(key)) : root.at(static_cast<std::size_t>(1));
@@ -183,10 +183,10 @@ void replace_case(bool root_is_map, Kind old_kind, Kind new_kind, Read read, std
 	check_tree(root, doc, name + " (all)");
 	for (int step = 0; step < 4; ++step) {
 		change(now, now_doc, r);
-		CHECK_EQ(root.serialise(), doc.bytes(), name + " after a change");
+		CHECK_EQ(root.serialize(), doc.bytes(), name + " after a change");
 		check_tree(now, now_doc, name + " (new, changed)");
 	}
-	CHECK_EQ(MsgPack(root).serialise(), doc.bytes(), name + " copy");
+	CHECK_EQ(MsgPack(root).serialize(), doc.bytes(), name + " copy");
 }
 
 std::size_t test_replace_exhaustive() {
@@ -214,7 +214,7 @@ void test_replace_random(std::size_t documents) {
 		for (int i = 0; i < 4; ++i) {
 			doc.set("k" + std::to_string(i), make_value(Kind(r.below(N_KINDS)), r, 0));
 		}
-		MsgPack root = MsgPack::unserialise(doc.bytes());
+		MsgPack root = MsgPack::unserialize(doc.bytes());
 		const std::string name = "random document " + std::to_string(n);
 		for (int step = 0; step < 8; ++step, ++replaces) {
 			// descend to a container, reading what is on the way
@@ -233,7 +233,7 @@ void test_replace_random(std::size_t documents) {
 			}
 			if (r.below(2)) check_tree(*m, *d, name);
 			Doc fresh = make_value(Kind(r.below(N_KINDS)), r, 0);
-			MsgPack value = MsgPack::unserialise(fresh.bytes());
+			MsgPack value = MsgPack::unserialize(fresh.bytes());
 			if (d->kind == Doc::MAP && !d->m.empty()) {
 				const std::size_t i = r.below(d->m.size());
 				m->replace(std::string_view(d->m[i].first), std::move(value));
@@ -245,10 +245,10 @@ void test_replace_random(std::size_t documents) {
 			} else {
 				continue;
 			}
-			CHECK_EQ(root.serialise(), doc.bytes(), name + " after a replace");
+			CHECK_EQ(root.serialize(), doc.bytes(), name + " after a replace");
 			check_tree(root, doc, name + " after a replace");
 			change(*m, *d, r);
-			CHECK_EQ(root.serialise(), doc.bytes(), name + " after a change");
+			CHECK_EQ(root.serialize(), doc.bytes(), name + " after a change");
 		}
 	}
 	std::printf("replace, random: %zu documents, %zu replaces\n", documents, replaces);
@@ -317,7 +317,7 @@ void test_lock(std::size_t documents) {
 		bool has_bad = false;
 		Doc doc = lock_doc(r, 0, r.below(2) == 0, has_bad);
 		const std::string name = "lock, document " + std::to_string(n);
-		MsgPack root = MsgPack::unserialise(doc.bytes());
+		MsgPack root = MsgPack::unserialize(doc.bytes());
 		if (has_bad) {
 			// a bad map is somewhere below: lock() throws, twice, and locks nothing
 			++failed;
@@ -331,7 +331,7 @@ void test_lock(std::size_t documents) {
 			CHECK(threw);
 			check_locked(root, doc, false, name + " after the second lock()");
 			// and the document is as it was, and can still be changed
-			CHECK_EQ(root.serialise(), doc.bytes(), name);
+			CHECK_EQ(root.serialize(), doc.bytes(), name);
 			if (doc.kind == Doc::MAP) {
 				root["added"] = 1;
 				doc.set("added", Doc::num(1));
@@ -339,14 +339,14 @@ void test_lock(std::size_t documents) {
 				root.push_back(1);
 				doc.a.push_back(Doc::num(1));
 			}
-			CHECK_EQ(root.serialise(), doc.bytes(), name + " after a change");
+			CHECK_EQ(root.serialize(), doc.bytes(), name + " after a change");
 		} else {
 			++locked;
 			root.lock();
 			CHECK(root.locked());
 			check_locked(root, doc, true, name + " after lock()");
 			root.lock();   // locking twice is fine
-			CHECK_EQ(root.serialise(), doc.bytes(), name);
+			CHECK_EQ(root.serialize(), doc.bytes(), name);
 		}
 	}
 	CHECK(failed > documents / 10 && locked > documents / 10);

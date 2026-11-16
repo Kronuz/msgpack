@@ -20,8 +20,8 @@ and code that shares Xapiand's value type.
   and its source share nothing and a change to one never shows in the other; a
   move hands the storage over, and a reference (`MsgPack&`, `doc["key"]`) aliases
   the same value.
-- **MessagePack on the wire.** `serialise()` writes the bytes and
-  `MsgPack::unserialise()` reads them.
+- **MessagePack on the wire.** `serialize()` writes the bytes and
+  `MsgPack::unserialize()` reads them.
 - **JSON both ways.** `to_string()` and `as_document()` write JSON through
   RapidJSON, and reading accepts comments, trailing commas, and `NaN`/`Inf`. JSON
   has no NaN or Infinity, so `to_string()` writes a float that is NaN or infinite as
@@ -52,8 +52,8 @@ int main() {
 	};
 	doc["tags"].push_back("operator");
 
-	std::string wire = doc.serialise();
-	MsgPack copy = MsgPack::unserialise(wire);
+	std::string wire = doc.serialize();
+	MsgPack copy = MsgPack::unserialize(wire);
 
 	MsgPack patch = MsgPack::ARRAY();
 	patch.push_back(MsgPack({ { "op", "replace" }, { "path", "/name" }, { "value", "Trinity" } }));
@@ -98,7 +98,7 @@ Not for:
 - **Documents that keep repeated keys.** A map holds each key once: when a
   document repeats a key, the last value wins and the entry keeps the position of
   the first. The merge happens when the map is first read or changed through the
-  API (a lookup, a walk, `hash()`, `erase`); `serialise()` and `size()` of a map
+  API (a lookup, a walk, `hash()`, `erase`); `serialize()` and `size()` of a map
   nothing has touched give the document as it came.
 - **Maps keyed by anything but strings.** Reading or changing such a map by key
   throws `MAP keys must be of type STR` and changes nothing, so the next call
@@ -126,9 +126,9 @@ Not for:
 `msgpack_benchmark` and `msgpack_compare` run the same operations on the same documents; the tables are the
 502-byte record `med` of [`benchmarks/corpus.h`](benchmarks/corpus.h) (15 keys, nested maps and arrays, every
 scalar type), in ns per call, as the median of nine repetitions, the smaller of two runs. A row is an operation:
-`unserialise` is bytes to a value (`MsgPack::unserialise`, `msgpack::unpack`, `json::from_msgpack`,
-`mpack_tree_parse`), `serialise` a value to bytes, `to_string` a value to JSON text (`Writer` over a DOM,
-`json::dump`), "read, set one field, write" is those three steps in a row, and "`unserialise`, then visit every
+`unserialize` is bytes to a value (`MsgPack::unserialize`, `msgpack::unpack`, `json::from_msgpack`,
+`mpack_tree_parse`), `serialize` a value to bytes, `to_string` a value to JSON text (`Writer` over a DOM,
+`json::dump`), "read, set one field, write" is those three steps in a row, and "`unserialize`, then visit every
 node" reads and then walks the whole document. A `-` means the library has no such call in the benchmark. The
 comparators are fetched by the benchmark targets only, at these versions:
 [msgpack-c](https://github.com/msgpack/msgpack-c) 1.3.0 (the copy `MsgPack` is built on) and its current release
@@ -142,21 +142,21 @@ Apple M4 Pro (arm64, macOS 26), Apple clang 17.0.0, CMake Release (`-O3 -DNDEBUG
 
 | Operation | MsgPack | msgpack-c 1.3.0 | msgpack-c 9.0.0 | nlohmann::json | mpack | RapidJSON |
 |---|---:|---:|---:|---:|---:|---:|
-| `unserialise` | 707 | 670 | 635 | 5,272 | 283 | - |
-| `serialise` | 504 | 480 | 581 | 1,191 | - | - |
+| `unserialize` | 707 | 670 | 635 | 5,272 | 283 | - |
+| `serialize` | 504 | 480 | 581 | 1,191 | - | - |
 | `to_string` | 1,266 | - | - | 1,937 | - | 1,277 |
 | read, set one field, write | 2,294 | - | - | 6,549 | - | - |
-| `unserialise`, then visit every node | 4,903 | 1,035 | 995 | 5,796 | 829 | - |
+| `unserialize`, then visit every node | 4,903 | 1,035 | 995 | 5,796 | 829 | - |
 
 Intel Core i9-9980HK (x86-64, macOS 15), Apple clang 17.0.0, CMake Release (`-O3 -DNDEBUG`):
 
 | Operation | MsgPack | msgpack-c 1.3.0 | msgpack-c 9.0.0 | nlohmann::json | mpack | RapidJSON |
 |---|---:|---:|---:|---:|---:|---:|
-| `unserialise` | 1,255 | 1,137 | 1,198 | 13,392 | 596 | - |
-| `serialise` | 765 | 648 | 1,268 | 3,502 | - | - |
+| `unserialize` | 1,255 | 1,137 | 1,198 | 13,392 | 596 | - |
+| `serialize` | 765 | 648 | 1,268 | 3,502 | - | - |
 | `to_string` | 2,009 | - | - | 4,000 | - | 1,785 |
 | read, set one field, write | 6,621 | - | - | 17,063 | - | - |
-| `unserialise`, then visit every node | 19,825 | 1,684 | 1,744 | 14,587 | 1,563 | - |
+| `unserialize`, then visit every node | 19,825 | 1,684 | 1,744 | 14,587 | 1,563 | - |
 
 ```sh
 cmake -B build-bench -DCMAKE_BUILD_TYPE=Release -DMSGPACK_BUILD_BENCH=ON

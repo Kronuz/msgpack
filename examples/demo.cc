@@ -14,8 +14,8 @@ int main() {
 	};
 
 	doc["tags"].push_back("operator");
-	std::string wire = doc.serialise();
-	MsgPack copy = MsgPack::unserialise(wire);
+	std::string wire = doc.serialize();
+	MsgPack copy = MsgPack::unserialize(wire);
 
 	rapidjson::Document json;
 	json.Parse(R"json({"from_json":"yes","answer":42})json");
