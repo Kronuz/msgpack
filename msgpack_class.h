@@ -21,9 +21,10 @@
  * THE SOFTWARE.
  */
 
-// The MsgPack class declaration.
+// The MsgPack class, its nested Iterator and Body, and its msgpack adaptors.
 #pragma once
 
+#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <functional>
@@ -34,6 +35,7 @@
 #include <string>
 #include <string_view>
 #include <type_traits>
+#include <unordered_map>
 #include <utility>
 #include <vector>
 #include "msgpack_types.h"
@@ -428,3 +430,312 @@ public:
 	friend msgpack::adaptor::object<MsgPack>;
 	friend msgpack::adaptor::object_with_zone<MsgPack>;
 };
+
+
+template <typename T>
+class MsgPack::Iterator : public std::iterator<std::input_iterator_tag, MsgPack> {
+	friend MsgPack;
+
+	T* _mobj;
+	mutable off_t _off;
+
+	Iterator(T* o, off_t off)
+		: _mobj(o),
+		  _off(off)
+	{
+		switch (_mobj->_const_body->get_type()) {
+			case MsgPack::Type::MAP:
+			case MsgPack::Type::ARRAY:
+			case MsgPack::Type::UNDEFINED:
+				return;
+			default:
+				THROW(msgpack::type_error, "{} is not iterable", enum_name(_mobj->_const_body->get_type()));
+		}
+	}
+
+public:
+	Iterator(const Iterator& it)
+		: _mobj(it._mobj),
+		  _off(it._off)	{ }
+
+	Iterator& operator++() {
+		++_off;
+		return *this;
+	}
+
+	const Iterator& operator++() const {
+		++_off;
+		return *this;
+	}
+
+	Iterator operator++(int) {
+		Iterator tmp(*this);
+		++_off;
+		return tmp;
+	}
+
+	const Iterator operator++(int) const {
+		Iterator tmp(*this);
+		++_off;
+		return tmp;
+	}
+
+	Iterator& operator+=(int off) {
+		_off += off;
+		return *this;
+	}
+
+	const Iterator& operator+=(int off) const {
+		_off += off;
+		return *this;
+	}
+
+	Iterator operator+(int off) {
+		Iterator tmp(*this);
+		tmp._off += off;
+		return tmp;
+	}
+
+	const Iterator operator+(int off) const {
+		Iterator tmp(*this);
+		tmp._off += off;
+		return tmp;
+	}
+
+	Iterator operator=(const Iterator& other) {
+		_mobj = other._mobj;
+		_off = other._off;
+		return *this;
+	}
+
+	T& operator*() {
+		if (_mobj->_const_body->get_type() == MsgPack::Type::MAP) {
+			return _mobj->at(_off)._body->_key;
+		} else {
+			return _mobj->at(_off);
+		}
+	}
+
+	T* operator->() {
+		return &operator*();
+	}
+
+	T& operator*() const {
+		if (_mobj->_const_body->get_type() == MsgPack::Type::MAP) {
+			return _mobj->at(_off)._const_body->_key;
+		} else {
+			return _mobj->at(_off);
+		}
+	}
+
+	T* operator->() const {
+		return &operator*();
+	}
+
+	T& value() {
+		return _mobj->at(_off);
+	}
+
+	T& value() const {
+		return _mobj->at(_off);
+	}
+
+	bool operator==(const Iterator& other) const {
+		return this == &other || (*_mobj == *other._mobj && _off == other._off);
+	}
+
+	bool operator!=(const Iterator& other) const {
+		return !operator==(other);
+	}
+};
+
+
+struct MsgPack::Body {
+	std::unordered_map<std::string_view, std::pair<MsgPack, MsgPack>> map;
+	std::vector<MsgPack> array;
+
+	mutable atomic_shared_ptr<const Data> _data;
+	mutable std::atomic<unsigned long long> _flags;
+
+	std::atomic_bool _lock;
+	bool _initialized;
+	bool _const;
+
+	const std::shared_ptr<msgpack::zone> _zone;
+	const std::shared_ptr<msgpack::object> _base;
+	std::weak_ptr<Body> _parent;
+	bool _is_key;
+	size_t _pos;
+	MsgPack _key;
+	msgpack::object* _obj;
+	size_t _capacity;
+
+	Body(const std::shared_ptr<msgpack::zone>& zone,
+		 const std::shared_ptr<msgpack::object>& base,
+		 const std::shared_ptr<Body>& parent,
+		 bool is_key,
+		 size_t pos,
+		 const std::shared_ptr<Body>& key,
+		 msgpack::object* obj
+		) : _flags(0),
+			_lock(false),
+			_initialized(false),
+			_const(false),
+			_zone(zone),
+			_base(base),
+			_parent(parent),
+			_is_key(is_key),
+			_pos(pos),
+			_key(key),
+			_obj(obj),
+			_capacity(size()) { }
+
+	Body(const std::shared_ptr<msgpack::zone>& zone,
+		 const std::shared_ptr<msgpack::object>& base,
+		 const std::shared_ptr<Body>& parent,
+		 msgpack::object* obj
+		) : _flags(0),
+			_lock(false),
+			_initialized(false),
+			_const(false),
+			_zone(zone),
+			_base(base),
+			_parent(parent),
+			_is_key(false),
+			_pos(-1),
+			_key(std::shared_ptr<Body>()),
+			_obj(obj),
+			_capacity(size()) { }
+
+	template <typename T>
+	Body(T&& v)
+		: _flags(0),
+		  _lock(false),
+		  _initialized(false),
+		  _const(false),
+		  _zone(std::make_shared<msgpack::zone>()),
+		  _base(std::make_shared<msgpack::object>(std::forward<T>(v), *_zone)),
+		  _parent(std::shared_ptr<Body>()),
+		  _is_key(false),
+		  _pos(-1),
+		  _key(std::shared_ptr<Body>()),
+		  _obj(_base.get()),
+		  _capacity(size()) { }
+
+	// Reads one object from `data` straight into this body's zone: the unpacked tree is the
+	// body's tree, with no second copy.
+	struct unpack_tag {};
+	Body(unpack_tag, const char* data, std::size_t len, std::size_t& off)
+		: _flags(0),
+		  _lock(false),
+		  _initialized(false),
+		  _const(false),
+		  _zone(std::make_shared<msgpack::zone>()),
+		  _base(std::make_shared<msgpack::object>(msgpack::unpack(*_zone, data, len, off))),
+		  _parent(std::shared_ptr<Body>()),
+		  _is_key(false),
+		  _pos(-1),
+		  _key(std::shared_ptr<Body>()),
+		  _obj(_base.get()),
+		  _capacity(size()) { }
+
+	MsgPack& at(size_t pos) {
+		return array.at(pos);
+	}
+
+	const MsgPack& at(size_t pos) const {
+		return array.at(pos);
+	}
+
+	MsgPack& at(std::string_view key) {
+		return map.at(key).second;
+	}
+
+	const MsgPack& at(std::string_view key) const {
+		return map.at(key).second;
+	}
+
+	size_t size() const noexcept {
+		switch (_obj->type) {
+			case msgpack::type::MAP:
+				return _obj->via.map.size;
+			case msgpack::type::ARRAY:
+				return _obj->via.array.size;
+			case msgpack::type::STR:
+				return _obj->via.str.size;
+			default:
+				return 0;
+		}
+	}
+
+	Type get_type() const noexcept {
+		return _obj->type == msgpack::type::EXT ? (Type)(_obj->via.ext.type() | MSGPACK_EXT_BEGIN) : (Type)_obj->type;
+	}
+};
+
+
+namespace msgpack {
+	MSGPACK_API_VERSION_NAMESPACE(MSGPACK_DEFAULT_API_NS) {
+		namespace adaptor {
+			////////////////////////////////////////////////////////////////////
+			// convert
+
+			template <>
+			struct convert<MsgPack> {
+				const msgpack::object& operator()(const msgpack::object& o, MsgPack& v) const {
+					v = MsgPack(o);
+					return o;
+				}
+			};
+
+			////////////////////////////////////////////////////////////////////
+			// pack
+
+			template <>
+			struct pack<MsgPack> {
+				template <typename Stream>
+				msgpack::packer<Stream>& operator()(msgpack::packer<Stream>& o, const MsgPack& v) const {
+					o << v;
+					return o;
+				}
+			};
+
+			////////////////////////////////////////////////////////////////////
+			// object and object_with_zone
+
+			template <>
+			struct object<MsgPack> {
+				void operator()(msgpack::object& o, const MsgPack& v) const {
+					o = msgpack::object(*v._const_body->_obj);
+				}
+			};
+
+			template <>
+			struct object_with_zone<MsgPack> {
+				void operator()(msgpack::object::with_zone& o, const MsgPack& v) const {
+					msgpack::object obj(*v._const_body->_obj, o.zone);
+					o.type = obj.type;
+					o.via = obj.via;
+				}
+			};
+
+			template <>
+			struct object<std::nullptr_t> {
+				void operator()(msgpack::object& o, std::nullptr_t) const {
+					msgpack::object nil;
+					o = msgpack::object(nil);
+				}
+			};
+
+			template <>
+			struct object_with_zone<std::nullptr_t> {
+				void operator()(msgpack::object::with_zone& o, std::nullptr_t) const {
+					msgpack::object nil;
+					msgpack::object obj(nil, o.zone);
+					o.type = obj.type;
+					o.via = obj.via;
+				}
+			};
+		} // namespace adaptor
+	} // MSGPACK_API_VERSION_NAMESPACE(MSGPACK_DEFAULT_API_NS)
+} // namespace msgpack

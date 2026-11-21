@@ -24,8 +24,7 @@
 // Element access: get, at, operator[], path, select, find and count.
 #pragma once
 
-#include "msgpack_body.h"
-#include "msgpack_iterator.h"
+#include "msgpack_class.h"
 
 template <typename M, typename>
 inline MsgPack& MsgPack::get(M&& o) {

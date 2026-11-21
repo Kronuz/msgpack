@@ -24,8 +24,7 @@
 // Initializing, deinitializing and reserving a value of each type.
 #pragma once
 
-#include "msgpack_body.h"
-#include "msgpack_iterator.h"
+#include "msgpack_class.h"
 
 inline MsgPack* MsgPack::_init_map(size_t pos) {
 	if (_body->_lock) {

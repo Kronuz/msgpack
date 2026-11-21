@@ -24,8 +24,7 @@
 // Comparison and the arithmetic operators.
 #pragma once
 
-#include "msgpack_body.h"
-#include "msgpack_iterator.h"
+#include "msgpack_class.h"
 
 inline bool MsgPack::operator==(const MsgPack& other) const {
 	return this == &other || *_const_body->_obj == *other._const_body->_obj;

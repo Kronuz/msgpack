@@ -28,8 +28,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <new>
-#include "msgpack_body.h"
-#include "msgpack_iterator.h"
+#include "msgpack_class.h"
 
 namespace msgpack_wrapper {
 	// Collects packed bytes: values up to 256 bytes stay on the stack, longer ones grow on the heap.

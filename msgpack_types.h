@@ -24,7 +24,6 @@
 // MsgPack constants, the undefined marker and the MsgPackType enum.
 #pragma once
 
-#include <cstddef>               // for size_t
 #include "likely.h"              // for likely, unlikely
 
 #include <cassert>               // for assert
@@ -54,6 +53,7 @@
 #include "xchange/rapidjson.hpp"
 #endif
 #include "xchange/string_view.hpp"
+#include <cstddef>
 
 constexpr size_t  MSGPACK_STR_INIT_SIZE   = 4;
 constexpr size_t  MSGPACK_MAP_INIT_SIZE   = 4;

@@ -24,9 +24,7 @@
 // Iterator entry points, constructors, initializers and assignment.
 #pragma once
 
-#include "msgpack_adaptor.h"
-#include "msgpack_body.h"
-#include "msgpack_iterator.h"
+#include "msgpack_class.h"
 
 namespace std {
 	inline auto to_string(const MsgPack& o) {

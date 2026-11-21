@@ -24,8 +24,7 @@
 // to_string, serialize, stream output and std::hash.
 #pragma once
 
-#include "msgpack_body.h"
-#include "msgpack_iterator.h"
+#include "msgpack_class.h"
 
 inline std::string MsgPack::to_string([[maybe_unused]] int indent) const {
 #ifdef WITHOUT_RAPIDJSON

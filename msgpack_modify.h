@@ -21,11 +21,504 @@
  * THE SOFTWARE.
  */
 
-// Fill, lock, and the public erase, replace, emplace, insert, update, put, add and append.
+// Finding, erasing, putting and filling elements: the internal operations and the public erase, replace, emplace, insert, update, put, add and append.
 #pragma once
 
-#include "msgpack_body.h"
-#include "msgpack_iterator.h"
+#include "msgpack_class.h"
+
+inline MsgPack::iterator MsgPack::_find(std::string_view key) {
+	switch (_body->get_type()) {
+		case Type::UNDEFINED:
+			return end();
+		case Type::MAP: {
+			auto it = _body->map.find(key);
+			if (it == _body->map.end()) {
+				return end();
+			}
+			return MsgPack::iterator(this, it->second.second._body->_pos);
+		}
+		default:
+			THROW(msgpack::type_error, "{} is not iterable", enum_name(_body->get_type()));
+	}
+}
+
+
+inline MsgPack::const_iterator MsgPack::_find(std::string_view key) const {
+	switch (_const_body->get_type()) {
+		case Type::UNDEFINED:
+			return cend();
+		case Type::MAP: {
+			auto it = _const_body->map.find(key);
+			if (it == _const_body->map.end()) {
+				return cend();
+			}
+			return MsgPack::const_iterator(this, it->second.second._const_body->_pos);
+		}
+		default:
+			THROW(msgpack::type_error, "{} is not iterable", enum_name(_const_body->get_type()));
+	}
+}
+
+
+inline MsgPack::iterator MsgPack::_find(size_t pos) {
+	switch (_body->get_type()) {
+		case Type::UNDEFINED:
+			return end();
+		case Type::MAP: {
+			if (pos >= _body->_obj->via.map.size) {
+				return end();
+			}
+			auto it = _body->map.find(std::string_view(_body->_obj->via.map.ptr[pos].key.via.str.ptr, _body->_obj->via.map.ptr[pos].key.via.str.size));
+			if (it == _body->map.end()) {
+				return end();
+			}
+			return MsgPack::iterator(this, it->second.second._body->_pos);
+		}
+		case Type::ARRAY: {
+			if (pos >= _body->_obj->via.array.size) {
+				return end();
+			}
+			auto it = _body->array.begin() + pos;
+			if (it >= _body->array.end()) {
+				return end();
+			}
+			return MsgPack::iterator(this, it->_body->_pos);
+		}
+		default:
+			THROW(msgpack::type_error, "{} is not iterable", enum_name(_body->get_type()));
+	}
+}
+
+
+inline MsgPack::const_iterator MsgPack::_find(size_t pos) const {
+	switch (_const_body->get_type()) {
+		case Type::UNDEFINED:
+			return cend();
+		case Type::MAP: {
+			if (pos >= _const_body->_obj->via.map.size) {
+				return cend();
+			}
+			auto it = _const_body->map.find(std::string_view(_const_body->_obj->via.map.ptr[pos].key.via.str.ptr, _const_body->_obj->via.map.ptr[pos].key.via.str.size));
+			if (it == _const_body->map.end()) {
+				return cend();
+			}
+			return MsgPack::const_iterator(this, it->second.second._const_body->_pos);
+		}
+		case Type::ARRAY: {
+			if (pos >= _const_body->_obj->via.array.size) {
+				return cend();
+			}
+			auto it = _const_body->array.begin() + pos;
+			if (it >= _const_body->array.end()) {
+				return cend();
+			}
+			return MsgPack::const_iterator(this, it->_const_body->_pos);
+		}
+		default:
+			THROW(msgpack::type_error, "{} is not iterable", enum_name(_const_body->get_type()));
+	}
+}
+
+
+template <typename M, typename>
+inline std::pair<size_t, MsgPack::iterator> MsgPack::_erase(M&& o) {
+	if (_body->_const) {
+		THROW(msgpack::const_error, "Constant object");
+	}
+	if (_body->_lock) {
+		assert(!_body->_lock);
+		THROW(msgpack::const_error, "Locked object");
+	}
+	switch (o._body->get_type()) {
+		case Type::STR:
+			return _erase(std::string_view(o._body->_obj->via.str.ptr, o._body->_obj->via.str.size));
+		case Type::NEGATIVE_INTEGER:
+			if (o._body->_obj->via.i64 < 0) {
+				THROW(msgpack::type_error, "Negative value of {} is not a valid key type for {}", enum_name(o._body->get_type()), enum_name(_body->get_type()));
+			}
+			return _erase(static_cast<size_t>(o._body->_obj->via.i64));
+		case Type::POSITIVE_INTEGER:
+			return _erase(static_cast<size_t>(o._body->_obj->via.u64));
+		default:
+			THROW(msgpack::type_error, "{} is not a valid key type for {}", enum_name(o._body->get_type()), enum_name(_body->get_type()));
+	}
+}
+
+
+inline std::pair<size_t, MsgPack::iterator> MsgPack::_erase(std::string_view key) {
+	if (_body->_const) {
+		THROW(msgpack::const_error, "Constant object");
+	}
+	if (_body->_lock) {
+		assert(!_body->_lock);
+		THROW(msgpack::const_error, "Locked object");
+	}
+	switch (_body->get_type()) {
+		case Type::UNDEFINED:
+			return std::make_pair(0, end());
+		case Type::MAP: {
+			auto it = _body->map.find(key);
+			if (it == _body->map.end()) {
+				return std::make_pair(0, end());
+			}
+
+			auto& mobj = it->second.second;
+			auto pos_ = mobj._body->_pos;
+			assert(pos_ < _body->_obj->via.map.size);
+			auto p = &_body->_obj->via.map.ptr[pos_];
+			std::memmove(p, p + 1, (_body->_obj->via.map.size - pos_ - 1) * sizeof(msgpack::object_kv));
+			--_body->_obj->via.map.size;
+			// Erase from map:
+			_body->map.erase(it);
+			_update_map(pos_);
+
+			auto next = _body->map.find(std::string_view(p->key.via.str.ptr, p->key.via.str.size));
+			if (next == _body->map.end()) {
+				return std::make_pair(1, end());   // the last entry went: one erased, nothing after it
+			}
+
+			return std::make_pair(1, MsgPack::iterator(this, next->second.second._body->_pos));
+		}
+		default:
+			THROW(msgpack::type_error, "{} is not iterable", enum_name(_body->get_type()));
+	}
+}
+
+
+inline std::pair<size_t, MsgPack::iterator> MsgPack::_erase(size_t pos) {
+	if (_body->_const) {
+		THROW(msgpack::const_error, "Constant object");
+	}
+	if (_body->_lock) {
+		assert(!_body->_lock);
+		THROW(msgpack::const_error, "Locked object");
+	}
+	switch (_body->get_type()) {
+		case Type::UNDEFINED:
+			return std::make_pair(0, end());
+		case Type::MAP: {
+			if (pos >= _body->_obj->via.map.size) {
+				return std::make_pair(0, end());
+			}
+			return _erase(std::string_view(_body->_obj->via.map.ptr[pos].key.via.str.ptr, _body->_obj->via.map.ptr[pos].key.via.str.size));
+		}
+		case Type::ARRAY: {
+			if (pos >= _body->_obj->via.array.size) {
+				return std::make_pair(0, end());
+			}
+			auto it = _body->array.begin() + pos;
+			if (it >= _body->array.end()) {
+				return std::make_pair(0, end());
+			}
+
+			auto& mobj = *it;
+			auto pos_ = mobj._body->_pos;
+			assert(pos_ < _body->_obj->via.array.size);
+			auto p = &_body->_obj->via.array.ptr[pos_];
+			std::memmove(p, p + 1, (_body->_obj->via.array.size - pos_ - 1) * sizeof(msgpack::object));
+			--_body->_obj->via.array.size;
+			// Erase from array:
+			_body->array.pop_back();
+			_update_array(pos_);
+
+			auto next = _body->array.begin() + pos_;
+			if (next >= _body->array.end()) {
+				return std::make_pair(1, end());   // the last element went: one erased, nothing after it
+			}
+
+			return std::make_pair(1, MsgPack::iterator(this, next->_body->_pos));
+		}
+		default:
+			THROW(msgpack::type_error, "{} is not iterable", enum_name(_body->get_type()));
+	}
+}
+
+
+inline void MsgPack::_clear() {
+	if (_body->_const) {
+		THROW(msgpack::const_error, "Constant object");
+	}
+	if (_body->_lock) {
+		assert(!_body->_lock);
+		THROW(msgpack::const_error, "Locked object");
+	}
+	_body->_initialized = false;
+
+	switch (_body->get_type()) {
+		case Type::MAP:
+			_body->_obj->via.map.size = 0;
+			_body->map.clear();
+			break;
+		case Type::ARRAY:
+			_body->_obj->via.array.size = 0;
+			_body->array.clear();
+			break;
+		case Type::STR:
+			_body->_obj->via.str.size = 0;
+			break;
+		default:
+			break;
+	}
+}
+
+
+template <typename T, std::enable_if_t<std::is_arithmetic<std::remove_reference_t<T>>::value or std::is_same<std::decay_t<T>, MsgPack>::value, int>>
+inline void MsgPack::_append(T&& o) {
+	_append(std::string_view(std::to_string(std::forward<T>(o))));
+}
+
+
+template <typename T, std::enable_if_t<std::is_convertible<T, MsgPack>::value and not std::is_arithmetic<std::remove_reference_t<T>>::value and not std::is_same<std::decay_t<T>, MsgPack>::value, int>>
+inline void MsgPack::_append(T&& o) {
+	_append(MsgPack(std::forward<T>(o)));
+}
+
+
+inline void MsgPack::_append(std::string_view val) {
+	if (_body->_const) {
+		THROW(msgpack::const_error, "Constant object");
+	}
+	if (_body->_lock) {
+		assert(!_body->_lock);
+		THROW(msgpack::const_error, "Locked object");
+	}
+	switch (_body->get_type()) {
+		case Type::UNDEFINED:
+			_init_str();
+			[[fallthrough]];
+		case Type::STR: {
+			auto val_size = static_cast<uint32_t>(val.size());
+			_reserve_str(_body->_obj->via.str.size + val_size);
+			if (val_size) {
+				auto ptr = const_cast<char*>(_body->_obj->via.str.ptr + _body->_obj->via.str.size);
+				std::memcpy(ptr, val.data(), val_size);
+				_body->_obj->via.str.size += val_size;
+			}
+			break;
+		}
+		default:
+			THROW(msgpack::type_error, "Cannot append STR to {}", enum_name(_body->get_type()));
+	}
+}
+
+
+template <typename M, typename T, typename>
+inline std::pair<MsgPack*, bool> MsgPack::_put(M&& o, T&& val, bool overwrite) {
+	if (_body->_const) {
+		THROW(msgpack::const_error, "Constant object");
+	}
+	if (_body->_lock) {
+		assert(!_body->_lock);
+		THROW(msgpack::const_error, "Locked object");
+	}
+	switch (o._body->get_type()) {
+		case Type::STR:
+			return _put(std::string_view(o._body->_obj->via.str.ptr, o._body->_obj->via.str.size), std::forward<T>(val), overwrite);
+		case Type::NEGATIVE_INTEGER:
+			if (o._body->_obj->via.i64 < 0) {
+				THROW(msgpack::type_error, "Negative value of {} is not a valid key type for {}", enum_name(o._body->get_type()), enum_name(_body->get_type()));
+			}
+			return _put(static_cast<size_t>(o._body->_obj->via.i64), std::forward<T>(val), overwrite);
+		case Type::POSITIVE_INTEGER:
+			return _put(static_cast<size_t>(o._body->_obj->via.u64), std::forward<T>(val), overwrite);
+		default:
+			THROW(msgpack::type_error, "{} is not a valid key type for {}", enum_name(o._body->get_type()), enum_name(_body->get_type()));
+	}
+}
+
+
+template <typename T>
+inline std::pair<MsgPack*, bool> MsgPack::_put(std::string_view key, T&& val, bool overwrite) {
+	if (_body->_const) {
+		THROW(msgpack::const_error, "Constant object");
+	}
+	if (_body->_lock) {
+		assert(!_body->_lock);
+		THROW(msgpack::const_error, "Locked object");
+	}
+	switch (_body->get_type()) {
+		case Type::UNDEFINED:
+			_init_map();
+			[[fallthrough]];
+		case Type::MAP: {
+			auto it = _body->map.find(key);
+			if (it == _body->map.end()) {
+				_reserve_map(_body->_obj->via.map.size + 1);
+				auto p = &_body->_obj->via.map.ptr[_body->_obj->via.map.size];
+				p->key.type = msgpack::type::STR;
+				p->key.via.str.size = static_cast<uint32_t>(key.size());
+				auto ptr = static_cast<char*>(_body->_zone->allocate_align(p->key.via.str.size));
+				std::memcpy(ptr, key.data(), p->key.via.str.size);
+				p->key.via.str.ptr = ptr;
+				p->val = msgpack::object(std::forward<T>(val), *_body->_zone);
+				++_body->_obj->via.map.size;
+				try {
+					return std::make_pair(_init_map(_body->map.size()), true);
+				} catch (...) {
+					--_body->_obj->via.map.size;   // an allocation failed: the entry is not added
+					throw;
+				}
+			} else {
+				auto pos = it->second.second._body->_pos;
+				if (overwrite) {
+					// The old value is replaced: what its body indexed is not on the new one. The new
+					// object is built first, because that can throw, and a locked value stays as it is.
+					auto& old_value = it->second.second;
+					if (old_value._body->_lock) {
+						THROW(msgpack::const_error, "Locked object");
+					}
+					msgpack::object obj(std::forward<T>(val), *_body->_zone);
+					old_value._deinitialize();
+					_body->_obj->via.map.ptr[pos].val = obj;
+					old_value._body->_capacity = old_value._body->size();
+					return std::make_pair(&_body->at(key), true);
+				}
+				return std::make_pair(&_body->at(key), false);
+			}
+		}
+		case Type::ARRAY:
+			THROW(msgpack::type_error, "{} cannot have string keys", enum_name(_body->get_type()));
+		default:
+			THROW(msgpack::type_error, "{} is not a container that can have keys", enum_name(_body->get_type()));
+	}
+}
+
+
+template <typename T>
+inline std::pair<MsgPack*, bool> MsgPack::_put(size_t pos, T&& val, bool overwrite) {
+	if (_body->_const) {
+		THROW(msgpack::const_error, "Constant object");
+	}
+	if (_body->_lock) {
+		assert(!_body->_lock);
+		THROW(msgpack::const_error, "Locked object");
+	}
+	switch (_body->get_type()) {
+		case Type::UNDEFINED:
+			_init_array();
+			[[fallthrough]];
+		case Type::ARRAY:
+			if (pos >= _body->_obj->via.array.size) {
+				_reserve_array(pos + 1);
+
+				// Initialize new elements.
+				const auto plast = &_body->_obj->via.array.ptr[pos];
+				auto p = &_body->_obj->via.array.ptr[_body->_obj->via.array.size];
+				for (; p != plast; ++p) {
+					p->type = msgpack::type::NIL;
+					++_body->_obj->via.array.size;
+				}
+
+				try {
+					*p = msgpack::object(std::forward<T>(val), *_body->_zone);
+					++_body->_obj->via.array.size;
+					return std::make_pair(_init_array(_body->array.size()), true);
+				} catch (...) {
+					_body->_obj->via.array.size = _body->array.size();   // an allocation failed: nothing is added
+					throw;
+				}
+			} else {
+				if (overwrite) {
+					// As for a map: build the new object first, then drop the index of the old value.
+					auto& old_value = _body->at(pos);
+					if (old_value._body->_lock) {
+						THROW(msgpack::const_error, "Locked object");
+					}
+					msgpack::object obj(std::forward<T>(val), *_body->_zone);
+					old_value._deinitialize();
+					_body->_obj->via.array.ptr[pos] = obj;
+					old_value._body->_capacity = old_value._body->size();
+					return std::make_pair(&_body->at(pos), true);
+				}
+				return std::make_pair(&_body->at(pos), false);
+			}
+		case Type::MAP:
+			THROW(msgpack::type_error, "{} cannot have numeric keys", enum_name(_body->get_type()));
+		default:
+			THROW(msgpack::type_error, "{} is not a container that can have keys", enum_name(_body->get_type()));
+	}
+}
+
+
+template <typename M, typename T, typename>
+inline std::pair<MsgPack*, bool> MsgPack::_emplace(M&& o, T&& val, bool overwrite) {
+	if (_body->_const) {
+		THROW(msgpack::const_error, "Constant object");
+	}
+	if (_body->_lock) {
+		assert(!_body->_lock);
+		THROW(msgpack::const_error, "Locked object");
+	}
+	switch (o._body->get_type()) {
+		case Type::STR:
+			return _put(std::string_view(o._body->_obj->via.str.ptr, o._body->_obj->via.str.size), std::forward<T>(val), overwrite);
+		case Type::NEGATIVE_INTEGER:
+			if (o._body->_obj->via.i64 < 0) {
+				THROW(msgpack::type_error, "Negative value of {} is not a valid key type for {}", enum_name(o._body->get_type()), enum_name(_body->get_type()));
+			}
+			return _insert(static_cast<size_t>(o._body->_obj->via.i64), std::forward<T>(val), overwrite);
+		case Type::POSITIVE_INTEGER:
+			return _insert(static_cast<size_t>(o._body->_obj->via.u64), std::forward<T>(val), overwrite);
+		default:
+			THROW(msgpack::type_error, "{} is not a valid key type for {}", enum_name(o._body->get_type()), enum_name(_body->get_type()));
+	}
+}
+
+
+template <typename T>
+inline std::pair<MsgPack*, bool> MsgPack::_insert(size_t pos, T&& val, bool overwrite) {
+	if (_body->_const) {
+		THROW(msgpack::const_error, "Constant object");
+	}
+	if (_body->_lock) {
+		assert(!_body->_lock);
+		THROW(msgpack::const_error, "Locked object");
+	}
+	switch (_body->get_type()) {
+		case Type::UNDEFINED:
+			_init_array();
+			[[fallthrough]];
+		case Type::ARRAY:
+			if (pos >= _body->_obj->via.array.size) {
+				_reserve_array(pos + 1);
+
+				// Initialize new elements.
+				const auto plast = &_body->_obj->via.array.ptr[pos];
+				auto p = &_body->_obj->via.array.ptr[_body->_obj->via.array.size];
+				for (; p != plast; ++p) {
+					p->type = msgpack::type::NIL;
+					++_body->_obj->via.array.size;
+				}
+
+				try {
+					*p = msgpack::object(std::forward<T>(val), *_body->_zone);
+					++_body->_obj->via.array.size;
+					return std::make_pair(_init_array(_body->array.size()), true);
+				} catch (...) {
+					_body->_obj->via.array.size = _body->array.size();   // an allocation failed: nothing is added
+					throw;
+				}
+			} else {
+				if (overwrite) {
+					_reserve_array(_body->_obj->via.array.size + 1);
+
+					auto p = &_body->_obj->via.array.ptr[pos];
+					std::memmove(p + 1, p, (_body->_obj->via.array.size - pos) * sizeof(msgpack::object));
+					*p = msgpack::object(std::forward<T>(val), *_body->_zone);
+					++_body->_obj->via.array.size;
+					return std::make_pair(_init_array(_body->array.size()), true);
+				} else {
+					return std::make_pair(&_body->at(pos), false);
+				}
+			}
+			break;
+		case Type::MAP:
+			THROW(msgpack::type_error, "{} cannot have numeric keys", enum_name(_body->get_type()));
+		default:
+			THROW(msgpack::type_error, "{} is not a container that can have keys", enum_name(_body->get_type()));
+	}
+}
+
 
 inline void MsgPack::_fill(bool recursive, bool lock) {
 	if (_body->_lock) {

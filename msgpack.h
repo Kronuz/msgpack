@@ -25,13 +25,8 @@
 
 #include "msgpack_types.h"
 #include "msgpack_class.h"
-#include "msgpack_iterator.h"
-#include "msgpack_body.h"
-#include "msgpack_adaptor.h"
 #include "msgpack_ctor.h"
 #include "msgpack_init.h"
-#include "msgpack_find_erase.h"
-#include "msgpack_put.h"
 #include "msgpack_modify.h"
 #include "msgpack_access.h"
 #include "msgpack_hash.h"
