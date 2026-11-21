@@ -27,6 +27,7 @@
 #include "msgpack_class.h"
 #include "msgpack_iterator.h"
 #include "msgpack_body.h"
+#include "msgpack_adaptor.h"
 #include "msgpack_ctor.h"
 #include "msgpack_init.h"
 #include "msgpack_find_erase.h"

@@ -21,7 +21,7 @@
  * THE SOFTWARE.
  */
 
-// to_string, serialize, stream output, std::hash and the msgpack adaptors.
+// to_string, serialize, stream output and std::hash.
 #pragma once
 
 #include "msgpack_body.h"
@@ -122,70 +122,3 @@ namespace std {
 		}
 	};
 }
-
-
-namespace msgpack {
-	MSGPACK_API_VERSION_NAMESPACE(MSGPACK_DEFAULT_API_NS) {
-		namespace adaptor {
-			////////////////////////////////////////////////////////////////////
-			// convert
-
-			template <>
-			struct convert<MsgPack> {
-				const msgpack::object& operator()(const msgpack::object& o, MsgPack& v) const {
-					v = MsgPack(o);
-					return o;
-				}
-			};
-
-			////////////////////////////////////////////////////////////////////
-			// pack
-
-			template <>
-			struct pack<MsgPack> {
-				template <typename Stream>
-				msgpack::packer<Stream>& operator()(msgpack::packer<Stream>& o, const MsgPack& v) const {
-					o << v;
-					return o;
-				}
-			};
-
-			////////////////////////////////////////////////////////////////////
-			// object and object_with_zone
-
-			template <>
-			struct object<MsgPack> {
-				void operator()(msgpack::object& o, const MsgPack& v) const {
-					o = msgpack::object(*v._const_body->_obj);
-				}
-			};
-
-			template <>
-			struct object_with_zone<MsgPack> {
-				void operator()(msgpack::object::with_zone& o, const MsgPack& v) const {
-					msgpack::object obj(*v._const_body->_obj, o.zone);
-					o.type = obj.type;
-					o.via = obj.via;
-				}
-			};
-
-			template <>
-			struct object<std::nullptr_t> {
-				void operator()(msgpack::object& o, std::nullptr_t) const {
-					msgpack::object nil;
-					o = msgpack::object(nil);
-				}
-			};
-
-			template <>
-			struct object_with_zone<std::nullptr_t> {
-				void operator()(msgpack::object::with_zone& o, std::nullptr_t) const {
-					msgpack::object nil;
-					msgpack::object obj(nil, o.zone);
-					o.type = obj.type;
-					o.via = obj.via;
-				}
-			};
-		} // namespace adaptor
-	} // MSGPACK_API_VERSION_NAMESPACE(MSGPACK_DEFAULT_API_NS)
-} // namespace msgpack
