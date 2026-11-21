@@ -24,6 +24,9 @@
 // Conversions, size, scalar accessors, as_* and the type predicates.
 #pragma once
 
+#include "msgpack_body.h"
+#include "msgpack_iterator.h"
+
 inline MsgPack::operator bool() const {
 	return as_boolean();
 }

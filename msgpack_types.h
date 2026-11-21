@@ -24,6 +24,37 @@
 // MsgPack constants, the undefined marker and the MsgPackType enum.
 #pragma once
 
+#include <cstddef>               // for size_t
+#include "likely.h"              // for likely, unlikely
+
+#include <cassert>               // for assert
+#include <cstdint>               // for std::uint32_t
+#include <cstdlib>               // for std::malloc, std::realloc, std::free
+#include <cstring>               // for std::memcmp, std::memcpy
+#include <functional>            // for std::function
+#include <memory>
+#include <new>                   // for std::bad_alloc
+#include <sstream>
+#include <string_view>           // for std::string_view
+#include <unordered_map>         // for std::unordered_map
+
+#include "atomic_shared_ptr.h"
+#include "enum.h"                // for ENUM_CLASS
+#ifdef MSGPACK_EXCEPTION_HEADER
+#include MSGPACK_EXCEPTION_HEADER
+#else
+#include "msgpack_exception.h"
+#endif
+#include "msgpack.hpp"
+#include "strict_stox.hh"
+#ifndef WITHOUT_RAPIDJSON
+#include "rapidjson/document.h"
+#include "rapidjson/prettywriter.h"
+#include "rapidjson/stringbuffer.h"
+#include "xchange/rapidjson.hpp"
+#endif
+#include "xchange/string_view.hpp"
+
 constexpr size_t  MSGPACK_STR_INIT_SIZE   = 4;
 constexpr size_t  MSGPACK_MAP_INIT_SIZE   = 4;
 constexpr size_t  MSGPACK_ARRAY_INIT_SIZE = 4;

@@ -24,6 +24,9 @@
 // Fill, lock, and the public erase, replace, emplace, insert, update, put, add and append.
 #pragma once
 
+#include "msgpack_body.h"
+#include "msgpack_iterator.h"
+
 inline void MsgPack::_fill(bool recursive, bool lock) {
 	if (_body->_lock) {
 		return;

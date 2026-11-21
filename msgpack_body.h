@@ -24,6 +24,13 @@
 // MsgPack::Body, the shared state behind a value.
 #pragma once
 
+#include <atomic>
+#include <string_view>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+#include "msgpack_class.h"
+
 struct MsgPack::Body {
 	std::unordered_map<std::string_view, std::pair<MsgPack, MsgPack>> map;
 	std::vector<MsgPack> array;

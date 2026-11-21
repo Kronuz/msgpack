@@ -24,6 +24,9 @@
 // The internal find, erase and clear.
 #pragma once
 
+#include "msgpack_body.h"
+#include "msgpack_iterator.h"
+
 inline MsgPack::iterator MsgPack::_find(std::string_view key) {
 	switch (_body->get_type()) {
 		case Type::UNDEFINED:

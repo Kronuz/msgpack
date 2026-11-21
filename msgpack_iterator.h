@@ -24,6 +24,10 @@
 // MsgPack::Iterator, the iterator over arrays and maps.
 #pragma once
 
+#include <cstddef>
+#include <iterator>
+#include "msgpack_class.h"
+
 template <typename T>
 class MsgPack::Iterator : public std::iterator<std::input_iterator_tag, MsgPack> {
 	friend MsgPack;

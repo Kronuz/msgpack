@@ -24,6 +24,20 @@
 // The MsgPack class declaration.
 #pragma once
 
+#include <cstddef>
+#include <cstdint>
+#include <functional>
+#include <initializer_list>
+#include <iterator>
+#include <memory>
+#include <ostream>
+#include <string>
+#include <string_view>
+#include <type_traits>
+#include <utility>
+#include <vector>
+#include "msgpack_types.h"
+
 class MsgPack {
 	struct Body;
 
